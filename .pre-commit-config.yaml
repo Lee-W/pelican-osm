@@ -1,0 +1,87 @@
+default_install_hook_types:
+- pre-commit
+- commit-msg
+- pre-push
+default_stages:
+- pre-commit
+repos:
+- hooks:
+  - id: check-hooks-apply
+  - id: check-useless-excludes
+  repo: meta
+- hooks:
+  - id: check-vcs-permalinks
+  - exclude: tests/((commands|data|providers/test_uv_provider)/|test_).+
+    id: end-of-file-fixer
+  - args:
+    - --markdown-linebreak-ext=md
+    exclude: \.svg$
+    id: trailing-whitespace
+  - id: debug-statements
+  - id: no-commit-to-branch
+  - id: check-merge-conflict
+  - id: check-toml
+  - args:
+    - --unsafe
+    id: check-yaml
+  - id: detect-private-key
+  repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+- hooks:
+  - id: uv-lock
+  - args:
+    - --frozen
+    - --all-groups
+    id: uv-sync
+    stages:
+    - pre-commit
+    - post-checkout
+    - post-merge
+    - post-rewrite
+  repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.10.3
+- hooks:
+  - additional_dependencies:
+    - black~=23.11
+    id: blacken-docs
+  repo: https://github.com/asottile/blacken-docs
+  rev: 1.20.0
+- hooks:
+  - additional_dependencies:
+    - tomli
+    args:
+    - --write-changes
+    id: codespell
+    language: python
+    name: Run codespell to check for common misspellings in files
+    types:
+    - text
+  repo: https://github.com/codespell-project/codespell
+  rev: v2.4.1
+- hooks:
+  - id: commitizen
+  - id: commitizen-branch
+    stages:
+    - post-commit
+  repo: https://github.com/commitizen-tools/commitizen
+  rev: v4.13.7
+- hooks:
+  - id: taplo-format
+  repo: https://github.com/ComPWA/taplo-pre-commit
+  rev: v0.9.3
+- hooks:
+  - entry: uv run --no-sync poe format
+    id: format
+    language: system
+    name: Format Python code
+    pass_filenames: false
+    types:
+    - python
+  - entry: uv run --no-sync poe lint
+    id: linter and test
+    language: system
+    name: Linters
+    pass_filenames: false
+    types:
+    - python
+  repo: local

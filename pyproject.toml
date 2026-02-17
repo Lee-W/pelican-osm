@@ -1,0 +1,113 @@
+[project]
+name = "pelican-osm"
+version = "0.1.0"
+description = "Pelican plugin to embed OpenStreetMap maps in Markdown articles using a {% place %} shortcode."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Wei Lee`", email = "weilee.rx@gmail.com" }]
+keywords = [
+  "pelican",
+  "plugin",
+  "markdown",
+  "map",
+  "OSM",
+  "OpenStreetMap",
+  "leaflet",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Plugins",
+  "Framework :: Pelican",
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = ["pyyaml>=6.0", "pelican>=4.5"]
+
+[dependency-groups]
+dev = [
+  { include-group = "base" },
+  { include-group = "test" },
+  { include-group = "linters" },
+]
+
+base = ["poethepoet>=0.41.0"]
+
+test = [
+  "pytest>=9",
+  "pytest-cov>=4",
+  "pytest-xdist>=3.1.0",
+  "pytest-regressions>=2.4.0",
+]
+
+linters = [
+  "ruff>=0.15.1",
+  "mypy>=1.19.1",
+  "prek>=0.3.3",
+  "types-pyyaml>=6.0.12.20250915",
+]
+
+
+[build-system]
+requires = ["uv_build >= 0.10.3, <0.11.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "pelican.plugins.osm"
+module-root = "src"
+
+[tool.mypy]
+files = ["src", "tests"]
+disallow_untyped_decorators = true
+disallow_subclassing_any = true
+warn_return_any = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["pelican.*"]
+ignore_missing_imports = true
+
+[tool.codespell]
+# Ref: https://github.com/codespell-project/codespell#using-a-config-file
+skip = '.git*,*.svg,*.lock'
+check-hidden = true
+ignore-words-list = 'asend'
+
+[tool.poe.tasks]
+format.help = "Format the code"
+format.sequence = [{ cmd = "ruff check --fix" }, { cmd = "ruff format" }]
+
+lint.help = "Lint the code"
+lint.sequence = [{ cmd = "ruff check" }, { cmd = "mypy" }]
+
+check-commit.help = "Check the commit messages"
+check-commit.cmd = "cz --no-raise 3 check --rev-range origin/main.."
+
+test.help = "Run the test suite"
+test.cmd = "pytest -n auto --dist=loadfile"
+
+cover.help = "Run the test suite with coverage"
+cover.ref = "test --cov-report term-missing --cov-report=xml:coverage.xml --cov=commitizen  --junitxml=junit.xml -o junit_family=legacy"
+
+all.help = "Run all tasks"
+all.sequence = ["format", "lint", "check-commit", "cover"]
+
+ci.help = "Run all tasks in CI"
+ci.sequence = ["check-commit", { cmd = "prek run --all-files" }, "cover"]
+ci.env = { SKIP = "no-commit-to-branch" }
+
+setup-pre-commit.help = "Install pre-commit hooks"
+setup-pre-commit.cmd = "prek install"
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "$version"
+version_scheme = "pep440"
+version_provider = "uv"
+update_changelog_on_bump = true
+major_version_zero = true
