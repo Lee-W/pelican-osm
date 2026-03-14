@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 import json
 import logging
 import re
@@ -285,25 +284,28 @@ def _geojson_url(yaml_path: Path, root: Path, static_prefix: str) -> str:
 
 
 def _render_place_html(
-    geojson_urls: list[str],
+    geojson_entries: list[dict],
     names: list[str],
     map_height: str,
     tile_url: str,
     attribution: str,
 ) -> str:
-    """Render a single map block that fetches one or more GeoJSON URLs."""
+    """Render a single map block that fetches one or more GeoJSON URLs.
+
+    geojson_entries: list of {"url": str, "fragment": str | None}
+    """
     global _MAP_COUNTER
     _MAP_COUNTER += 1
     map_id = f"osm-map-{_MAP_COUNTER}"
 
-    if not geojson_urls:
+    if not geojson_entries:
         return "<!-- pelican-osm: no valid places -->"
 
     def _attr(value: str) -> str:
         """Escape a string for use inside a double-quoted HTML attribute."""
         return value.replace("&", "&amp;").replace('"', "&quot;")
 
-    urls_attr = _attr(json.dumps(geojson_urls))
+    entries_attr = _attr(json.dumps(geojson_entries))
     tile_attr = _attr(tile_url)
     attribution_attr = _attr(attribution)
 
@@ -321,7 +323,7 @@ def _render_place_html(
         f'<div class="osm-map-block">\n'
         f'  <div id="{map_id}" class="osm-map" '
         f'style="--osm-map-height:{map_height};" '
-        f'data-geojson="{urls_attr}" '
+        f'data-geojson="{entries_attr}" '
         f'data-tile="{tile_attr}" '
         f'data-attribution="{attribution_attr}">'
         f"</div>\n"
@@ -347,23 +349,39 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
         raw_args = match.group(1)
         specs = [s.strip() for s in raw_args.split(",") if s.strip()]
 
-        geojson_urls: list[str] = []
+        # Each entry: {"url": "...", "fragment": "name_or_id" | None}
+        geojson_entries: list[dict] = []
         names: list[str] = []
 
         for spec in specs:
-            yaml_paths = resolver.resolve_to_paths(spec)
+            fragment = None
+            if "#" in spec:
+                spec_path, fragment = spec.split("#", 1)
+                fragment = fragment.strip()
+            else:
+                spec_path = spec
+
+            yaml_paths = resolver.resolve_to_paths(spec_path)
             for yaml_path in yaml_paths:
                 url = _geojson_url(yaml_path, resolver.root, static_prefix)
-                if url not in geojson_urls:
-                    geojson_urls.append(url)
-                # Collect names for caption from the YAML
+                entry = {"url": url, "fragment": fragment}
+                if entry not in geojson_entries:
+                    geojson_entries.append(entry)
+
+                # Collect names for caption, respecting fragment filter
                 places = _load_yaml_file(yaml_path)
-                names.extend(
-                    p["name"] for p in places if _validate_place(p, str(yaml_path))
-                )
+                valid = [p for p in places if _validate_place(p, str(yaml_path))]
+                if fragment:
+                    valid = [
+                        p
+                        for p in valid
+                        if str(p.get("id", "")) == fragment
+                        or str(p.get("name", "")) == fragment
+                    ]
+                names.extend(p["name"] for p in valid)
 
         return _render_place_html(
-            geojson_urls, names, map_height, tile_url, attribution
+            geojson_entries, names, map_height, tile_url, attribution
         )
 
     result = cast(str, pattern.sub(replace, content))
@@ -395,8 +413,8 @@ def _init_resolver(pelican_obj) -> None:
         root = (content_path / root).resolve()
 
     _resolver = PlaceResolver(root)
-    log.info("pelican-osm: content_path=%s", content_path)
-    log.info("pelican-osm: places root=%s exists=%s", root, root.exists())
+    log.warning("pelican-osm: content_path=%s", content_path)
+    log.warning("pelican-osm: places root=%s exists=%s", root, root.exists())
 
 
 def _process_article(content) -> None:
@@ -414,6 +432,7 @@ def _process_article(content) -> None:
 
 def _place_to_feature(place: dict[str, Any]) -> dict[str, Any]:
     """Convert a single place dict to a GeoJSON Feature."""
+    import datetime
 
     properties = {}
     for k, v in place.items():

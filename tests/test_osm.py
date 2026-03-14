@@ -1,3 +1,13 @@
+"""Tests for pelican-osm plugin (current architecture).
+
+Architecture summary:
+  - YAML files are loaded via _load_yaml_file (3 formats)
+  - PlaceResolver maps shortcode specs to YAML paths or place dicts
+  - _process_content replaces {% place %} with HTML that references GeoJSON URLs
+  - _export_geojson converts every YAML to a .geojson file at build time
+  - JS fetches the .geojson files at runtime
+"""
+
 from __future__ import annotations
 
 import json
@@ -116,6 +126,11 @@ def places_root(tmp_path: Path) -> Path:
 @pytest.fixture()
 def resolver(places_root: Path) -> PlaceResolver:
     return PlaceResolver(places_root)
+
+
+# ---------------------------------------------------------------------------
+# _load_yaml_file
+# ---------------------------------------------------------------------------
 
 
 class TestLoadYamlFile:
@@ -349,9 +364,12 @@ class TestGeojsonUrl:
 
 
 class TestRenderPlaceHtml:
+    def _entry(self, url, fragment=None):
+        return {"url": url, "fragment": fragment}
+
     def test_returns_map_block(self):
         html = _render_place_html(
-            ["/static/places/a.geojson"], ["A"], "400px", TILE, ATTR
+            [self._entry("/static/places/a.geojson")], ["A"], "400px", TILE, ATTR
         )
         assert 'class="osm-map-block"' in html
         assert 'class="osm-map"' in html
@@ -359,47 +377,72 @@ class TestRenderPlaceHtml:
 
     def test_data_geojson_attribute_contains_url(self):
         html = _render_place_html(
-            ["/static/places/a.geojson"], ["A"], "400px", TILE, ATTR
+            [self._entry("/static/places/a.geojson")], ["A"], "400px", TILE, ATTR
         )
         assert "data-geojson=" in html
         assert "/static/places/a.geojson" in html
 
-    def test_multiple_urls_in_data_geojson(self):
-        urls = ["/static/places/a.geojson", "/static/places/b.geojson"]
-        html = _render_place_html(urls, ["A", "B"], "400px", TILE, ATTR)
+    def test_fragment_included_in_data_geojson(self):
+        html = _render_place_html(
+            [self._entry("/static/places/a.geojson", "上野公園")],
+            ["上野公園"],
+            "400px",
+            TILE,
+            ATTR,
+        )
+        assert "上野公園" in html
+
+    def test_null_fragment_included(self):
+        html = _render_place_html(
+            [self._entry("/static/places/a.geojson", None)], ["A"], "400px", TILE, ATTR
+        )
+        assert "null" in html  # JSON null for no fragment
+
+    def test_multiple_entries(self):
+        entries = [self._entry("/a.geojson"), self._entry("/b.geojson")]
+        html = _render_place_html(entries, ["A", "B"], "400px", TILE, ATTR)
         assert "a.geojson" in html
         assert "b.geojson" in html
 
-    def test_empty_urls_returns_comment(self):
+    def test_empty_entries_returns_comment(self):
         html = _render_place_html([], [], "400px", TILE, ATTR)
         assert "pelican-osm: no valid places" in html
 
     def test_caption_few_names(self):
-        html = _render_place_html(["/u.geojson"], ["A", "B"], "400px", TILE, ATTR)
+        html = _render_place_html(
+            [self._entry("/u.geojson")], ["A", "B"], "400px", TILE, ATTR
+        )
         assert "A, B" in html
 
     def test_caption_many_names(self):
         names = ["A", "B", "C", "D", "E"]
-        html = _render_place_html(["/u.geojson"], names, "400px", TILE, ATTR)
+        html = _render_place_html(
+            [self._entry("/u.geojson")], names, "400px", TILE, ATTR
+        )
         assert "A, B, C" in html
         assert "and 2 more" in html
 
     def test_attribution_with_quotes_is_escaped(self):
         attr = '&copy; <a href="https://example.com">OSM</a>'
-        html = _render_place_html(["/u.geojson"], ["A"], "400px", TILE, attr)
-        # The raw href quote must not appear unescaped inside the attribute
-        assert 'data-attribution="' in html
-        # Verify the attribute is properly closed (no unescaped " inside)
+        html = _render_place_html(
+            [self._entry("/u.geojson")], ["A"], "400px", TILE, attr
+        )
         m = re.search(r'data-attribution="([^"]*)"', html)
         assert m is not None
 
     def test_map_height_css_var(self):
-        html = _render_place_html(["/u.geojson"], ["A"], "600px", TILE, ATTR)
+        html = _render_place_html(
+            [self._entry("/u.geojson")], ["A"], "600px", TILE, ATTR
+        )
         assert "--osm-map-height:600px" in html
 
     def test_unique_map_ids(self):
-        html1 = _render_place_html(["/u.geojson"], ["A"], "400px", TILE, ATTR)
-        html2 = _render_place_html(["/u.geojson"], ["A"], "400px", TILE, ATTR)
+        html1 = _render_place_html(
+            [self._entry("/u.geojson")], ["A"], "400px", TILE, ATTR
+        )
+        html2 = _render_place_html(
+            [self._entry("/u.geojson")], ["A"], "400px", TILE, ATTR
+        )
         id1 = re.search(r'id="(osm-map-\d+)"', html1).group(1)
         id2 = re.search(r'id="(osm-map-\d+)"', html2).group(1)
         assert id1 != id2
@@ -473,6 +516,28 @@ class TestProcessContent:
         content = "{% place japan/tamako.yml, japan/tamako.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert result.count("tamako.geojson") == 1
+
+    def test_fragment_passed_through_to_data_geojson(self, resolver):
+        content = "{% place japan/tamako.yml#出町桝形商店街 %}"
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        m = re.search(r'data-geojson="([^"]*)"', result)
+        assert m is not None
+        decoded = m.group(1).replace("&quot;", '"').replace("&amp;", "&")
+        entries = json.loads(decoded)
+        assert entries[0]["fragment"] == "出町桝形商店街"
+
+    def test_fragment_filters_caption_names(self, resolver):
+        # Caption should only show the matched place, not all places in the file
+        content = "{% place japan/tamako.yml#出町桝形商店街 %}"
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        assert "出町桝形商店街" in result
+        assert "鴨川デルタ" not in result
+
+    def test_no_fragment_shows_all_names(self, resolver):
+        content = "{% place japan/tamako.yml %}"
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        assert "出町桝形商店街" in result
+        assert "鴨川デルタ" in result
 
 
 # ---------------------------------------------------------------------------
