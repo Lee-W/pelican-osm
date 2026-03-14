@@ -73,13 +73,17 @@
   }
 
   // ── Add GeoJSON features to map ───────────────────────────────
-  function addFeatures(map, features, markers) {
+  function addFeatures(map, features, fragment, markers) {
     for (const feature of features) {
       if (feature.geometry?.type !== "Point") continue;
-      const [lon, lat] = feature.geometry.coordinates;
       const props = feature.properties || {};
       if (!props.name) continue;
 
+      // Fragment filter: match by id or name
+      if (fragment && props.id !== fragment && props.name !== fragment)
+        continue;
+
+      const [lon, lat] = feature.geometry.coordinates;
       const marker = L.marker([lat, lon]).addTo(map);
       marker.bindPopup(buildPopupHtml(props, lat, lon), { maxWidth: 280 });
       markers.push(marker);
@@ -88,38 +92,38 @@
 
   // ── Map init ──────────────────────────────────────────────────
   async function initMap(el) {
-    const rawUrls = el.getAttribute("data-geojson");
+    const rawEntries = el.getAttribute("data-geojson");
     const tileUrl = el.getAttribute("data-tile");
     const attribution = el.getAttribute("data-attribution");
 
-    let urls;
+    let entries;
     try {
-      urls = JSON.parse(rawUrls);
+      entries = JSON.parse(rawEntries);
     } catch (e) {
       console.error("pelican-osm: failed to parse data-geojson", e);
       return;
     }
 
-    if (!urls || urls.length === 0) return;
+    if (!entries || entries.length === 0) return;
 
     const map = L.map(el.id);
     L.tileLayer(tileUrl, { attribution, maxZoom: 18 }).addTo(map);
 
     const markers = [];
 
-    // Fetch all GeoJSON files in parallel
     const results = await Promise.allSettled(
-      urls.map((url) =>
-        fetch(url).then((r) => {
-          if (!r.ok) throw new Error(`${r.status} ${url}`);
-          return r.json();
+      entries.map((entry) =>
+        fetch(entry.url).then((r) => {
+          if (!r.ok) throw new Error(`${r.status} ${entry.url}`);
+          return r.json().then((fc) => ({ fc, fragment: entry.fragment }));
         }),
       ),
     );
 
     for (const result of results) {
       if (result.status === "fulfilled") {
-        addFeatures(map, result.value.features || [], markers);
+        const { fc, fragment } = result.value;
+        addFeatures(map, fc.features || [], fragment, markers);
       } else {
         console.warn("pelican-osm: failed to fetch GeoJSON:", result.reason);
       }

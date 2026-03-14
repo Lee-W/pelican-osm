@@ -2,7 +2,7 @@
 
 ### Feat
 
-- rewrite the whole structure and add multipe file support
+- rewrite the whole structure and add multiple file support
 
 ## 0.2.0 (2026-02-17)
 
