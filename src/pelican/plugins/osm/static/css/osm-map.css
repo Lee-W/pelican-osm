@@ -1,0 +1,177 @@
+/* ==========================================================================
+   pelican-osm  —  osm-map.css
+   All visual properties are expressed as CSS custom properties so users can
+   override individual values without touching the plugin source.
+
+   Override in your own stylesheet, e.g.:
+
+     .osm-map-block {
+       --osm-radius: 0;
+       --osm-shadow: none;
+     }
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Custom properties  (all overridable per-element or globally)
+   -------------------------------------------------------------------------- */
+:root {
+  /* Map block */
+  --osm-map-height: 400px; /* overridden per-map via inline var */
+  --osm-radius: 8px;
+  --osm-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+
+  /* Caption bar */
+  --osm-caption-bg: #f5f5f5;
+  --osm-caption-color: #555;
+  --osm-caption-font-size: 0.9em;
+  --osm-caption-padding: 0.4em 0.8em;
+  --osm-caption-border: 1px solid #ddd;
+
+  /* Popup container */
+  --osm-popup-min-width: 200px;
+  --osm-popup-font-size: 1.3em;
+  --osm-popup-line-height: 1.6;
+
+  /* Popup title */
+  --osm-popup-name-size: 1.15em;
+  --osm-popup-name-weight: 700;
+  --osm-popup-name-gap: 0.35em;
+
+  /* Badge (tags) */
+  --osm-badge-font-size: 0.82em;
+  --osm-badge-padding: 0.15em 0.6em;
+  --osm-badge-radius: 999px;
+  --osm-badge-gap: 0.5em;
+
+  /* Field rows */
+  --osm-field-gap: 0.15em;
+  --osm-field-color: #333;
+  --osm-label-color: #111;
+  --osm-label-weight: 600;
+
+  /* Links row */
+  --osm-links-gap: 0.65em;
+  --osm-links-font-size: 0.9em;
+  --osm-links-color: #666;
+  --osm-links-anchor-color: #c0392b;
+}
+
+/* --------------------------------------------------------------------------
+   Map block
+   -------------------------------------------------------------------------- */
+.osm-map-block {
+  margin: 1.5em 0;
+  border-radius: var(--osm-radius);
+  overflow: hidden;
+  box-shadow: var(--osm-shadow);
+}
+
+/* --------------------------------------------------------------------------
+   Map canvas
+   The height can be set globally via --osm-map-height on :root,
+   or per-map by the plugin which writes style="--osm-map-height:Xpx;"
+   -------------------------------------------------------------------------- */
+.osm-map {
+  width: 100%;
+  height: var(--osm-map-height);
+  min-height: 200px;
+  background: #e8e8e8;
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   Caption bar
+   -------------------------------------------------------------------------- */
+.osm-map-caption {
+  background: var(--osm-caption-bg);
+  color: var(--osm-caption-color);
+  font-size: var(--osm-caption-font-size);
+  padding: var(--osm-caption-padding);
+  border-top: var(--osm-caption-border);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.osm-map-caption:hover {
+  white-space: normal;
+  overflow: visible;
+}
+
+/* --------------------------------------------------------------------------
+   Popup wrapper
+   -------------------------------------------------------------------------- */
+.osm-popup {
+  min-width: var(--osm-popup-min-width);
+  font-size: var(--osm-popup-font-size);
+  line-height: var(--osm-popup-line-height);
+}
+
+/* --------------------------------------------------------------------------
+   Popup: place name
+   -------------------------------------------------------------------------- */
+.osm-popup-name {
+  display: block;
+  font-size: var(--osm-popup-name-size);
+  font-weight: var(--osm-popup-name-weight);
+  margin-bottom: var(--osm-popup-name-gap);
+}
+
+/* --------------------------------------------------------------------------
+   Popup: badges (tags)
+   -------------------------------------------------------------------------- */
+.osm-badge {
+  display: inline-block;
+  font-size: var(--osm-badge-font-size);
+  padding: var(--osm-badge-padding);
+  border-radius: var(--osm-badge-radius);
+  margin-bottom: var(--osm-badge-gap);
+  font-weight: 600;
+}
+
+.osm-badge--tag {
+  background: var(--osm-badge-tag-bg, #e8e8e8);
+  color: var(--osm-badge-tag-color, #444);
+}
+
+/* --------------------------------------------------------------------------
+   Popup: tags row
+   -------------------------------------------------------------------------- */
+.osm-popup-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+  margin-bottom: var(--osm-badge-gap);
+}
+
+/* --------------------------------------------------------------------------
+   Popup: extra field rows  (Key: Value)
+   -------------------------------------------------------------------------- */
+.osm-popup-field {
+  margin: var(--osm-field-gap) 0;
+  color: var(--osm-field-color);
+}
+
+.osm-popup-label {
+  font-weight: var(--osm-label-weight);
+  color: var(--osm-label-color);
+}
+
+/* --------------------------------------------------------------------------
+   Popup: OSM / Google links row
+   -------------------------------------------------------------------------- */
+.osm-popup-links {
+  margin-top: var(--osm-links-gap);
+  font-size: var(--osm-links-font-size);
+  color: var(--osm-links-color);
+}
+
+.osm-popup-links a {
+  color: var(--osm-links-anchor-color);
+  text-decoration: none;
+}
+
+.osm-popup-links a:hover {
+  text-decoration: underline;
+}
