@@ -15,7 +15,6 @@ repos:
     id: end-of-file-fixer
   - args:
     - --markdown-linebreak-ext=md
-    exclude: \.svg$
     id: trailing-whitespace
   - id: debug-statements
   - id: no-commit-to-branch

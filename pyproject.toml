@@ -5,7 +5,7 @@ description = "Pelican plugin to embed OpenStreetMap maps in Markdown articles u
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Wei Lee`", email = "weilee.rx@gmail.com" }]
+authors = [{ name = "Wei Lee", email = "weilee.rx@gmail.com" }]
 keywords = [
   "pelican",
   "plugin",
@@ -46,8 +46,9 @@ test = [
 linters = [
   "ruff>=0.15.1",
   "mypy>=1.19.1",
-  "prek>=0.3.3",
   "types-pyyaml>=6.0.12.20250915",
+  "prek>=0.3.3",
+  "commitizen>=4.13.9",
 ]
 
 
@@ -111,3 +112,13 @@ version_scheme = "pep440"
 version_provider = "uv"
 update_changelog_on_bump = true
 major_version_zero = true
+
+[tool.pytest]
+testpaths = ["tests"]
+addopts = ["--cov=pelican.plugins.osm", "--cov-report=term-missing"]
+
+[tool.coverage.run]
+source = ["pelican/plugins/osm"]
+
+[tool.coverage.paths]
+source = ["src/pelican/plugins/osm", "*/pelican/plugins/osm"]
