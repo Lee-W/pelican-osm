@@ -1,6 +1,6 @@
 [project]
 name = "pelican-osm"
-version = "0.3.1"
+version = "0.4.0"
 description = "Pelican plugin to embed OpenStreetMap maps in Markdown articles using a {% place %} shortcode."
 readme = "README.md"
 requires-python = ">=3.11"

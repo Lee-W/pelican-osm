@@ -1,3 +1,9 @@
+## 0.4.0 (2026-03-25)
+
+### Feat
+
+- add full screen and images support
+
 ## 0.3.1 (2026-03-14)
 
 ### Fix
