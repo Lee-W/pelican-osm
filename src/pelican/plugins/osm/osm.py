@@ -283,16 +283,40 @@ def _geojson_url(yaml_path: Path, root: Path, static_prefix: str) -> str:
     )
 
 
+def _resolve_image_url(image_path: str, siteurl: str, content_path: Path) -> str:
+    """Resolve image path to absolute URL.
+
+    Supports:
+    - Absolute URLs (http://, https://)
+    - Relative Pelican paths (images/photo.jpg)
+    - Absolute paths (/static/images/photo.jpg)
+    """
+    image_path = image_path.strip()
+
+    # Already absolute URL
+    if image_path.startswith(("http://", "https://")):
+        return image_path
+
+    # Remove leading slash for relative path handling
+    if image_path.startswith("/"):
+        return siteurl.rstrip("/") + image_path
+
+    # Relative Pelican path - prepend SITEURL
+    return siteurl.rstrip("/") + "/" + image_path.lstrip("/")
+
+
 def _render_place_html(
     geojson_entries: list[dict],
     names: list[str],
     map_height: str,
     tile_url: str,
     attribution: str,
+    images_map: dict[str, list[str]] | None = None,
 ) -> str:
     """Render a single map block that fetches one or more GeoJSON URLs.
 
     geojson_entries: list of {"url": str, "fragment": str | None}
+    images_map: dict of {place_id_or_name: [image_urls]}
     """
     global _MAP_COUNTER
     _MAP_COUNTER += 1
@@ -308,6 +332,11 @@ def _render_place_html(
     entries_attr = _attr(json.dumps(geojson_entries))
     tile_attr = _attr(tile_url)
     attribution_attr = _attr(attribution)
+
+    # Add images data if provided
+    images_attr = ""
+    if images_map:
+        images_attr = f' data-images="{_attr(json.dumps(images_map))}"'
 
     CAPTION_MAX = 3
     if len(names) <= CAPTION_MAX:
@@ -325,7 +354,8 @@ def _render_place_html(
         f'style="--osm-map-height:{map_height};" '
         f'data-geojson="{entries_attr}" '
         f'data-tile="{tile_attr}" '
-        f'data-attribution="{attribution_attr}">'
+        f'data-attribution="{attribution_attr}"'
+        f"{images_attr}>"
         f"</div>\n"
         f'  <div class="osm-map-caption">{captions}</div>\n'
         f"</div>"
@@ -339,6 +369,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
     tile_url = settings.get("OSM_MAP_TILE", DEFAULT_MAP_TILE)
     attribution = settings.get("OSM_MAP_ATTRIBUTION", DEFAULT_MAP_ATTRIBUTION)
     static_prefix = settings.get("OSM_STATIC_PREFIX", "/static")
+    siteurl = settings.get("SITEURL", "")
 
     pattern = re.compile(
         r"\{%\s*" + re.escape(shortcode) + r"\s+(.+?)\s*%\}",
@@ -352,6 +383,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
         # Each entry: {"url": "...", "fragment": "name_or_id" | None}
         geojson_entries: list[dict] = []
         names: list[str] = []
+        images_map: dict[str, list[str]] = {}
 
         for spec in specs:
             fragment = None
@@ -368,7 +400,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
                 if entry not in geojson_entries:
                     geojson_entries.append(entry)
 
-                # Collect names for caption, respecting fragment filter
+                # Collect names and images for caption, respecting fragment filter
                 places = _load_yaml_file(yaml_path)
                 valid = [p for p in places if _validate_place(p, str(yaml_path))]
                 if fragment:
@@ -380,8 +412,29 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
                     ]
                 names.extend(p["name"] for p in valid)
 
+                # Collect images from places - map by id or name
+                for p in valid:
+                    images = p.get("images", [])
+                    if images:
+                        # Handle both string and list formats
+                        if isinstance(images, str):
+                            images = [images]
+                        resolved_images = []
+                        for img in images:
+                            resolved_url = _resolve_image_url(
+                                img, siteurl, resolver.root.parent
+                            )
+                            resolved_images.append(resolved_url)
+
+                        # Use id if available, otherwise use name
+                        key = p.get("id") or p.get("name")
+                        if key:
+                            images_map[key] = resolved_images
+
+        images_dict = images_map if images_map else None
+
         return _render_place_html(
-            geojson_entries, names, map_height, tile_url, attribution
+            geojson_entries, names, map_height, tile_url, attribution, images_dict
         )
 
     result = cast(str, pattern.sub(replace, content))
@@ -436,7 +489,7 @@ def _place_to_feature(place: dict[str, Any]) -> dict[str, Any]:
 
     properties = {}
     for k, v in place.items():
-        if k in ("lat", "lon"):
+        if k in ("lat", "lon", "images"):
             continue
         if v == "" or v == [] or v is None:
             continue
