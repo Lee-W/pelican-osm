@@ -1,3 +1,9 @@
+## 0.4.1 (2026-03-26)
+
+### Fix
+
+- fix fullscreen behavior
+
 ## 0.4.0 (2026-03-25)
 
 ### Feat
