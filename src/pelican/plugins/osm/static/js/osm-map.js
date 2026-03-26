@@ -125,26 +125,43 @@
       const mapBlock = mapContainer.closest(".osm-map-block");
       if (!mapBlock) return;
 
-      try {
-        if (!document.fullscreenElement) {
-          await mapBlock.requestFullscreen();
-          fsBtn.classList.add("osm-fullscreen-btn--active");
+      const isCssFullscreen = mapBlock.classList.contains(
+        "osm-map-block--fullscreen",
+      );
+      const isNativeFullscreen = document.fullscreenElement === mapBlock;
+
+      if (!isCssFullscreen && !isNativeFullscreen) {
+        // Enter fullscreen - try native first
+        if (mapBlock.requestFullscreen) {
+          try {
+            await mapBlock.requestFullscreen();
+            fsBtn.classList.add("osm-fullscreen-btn--active");
+          } catch (err) {
+            // Fallback to CSS fullscreen
+            mapBlock.classList.add("osm-map-block--fullscreen");
+            fsBtn.classList.add("osm-fullscreen-btn--active");
+          }
         } else {
-          await document.exitFullscreen();
-          fsBtn.classList.remove("osm-fullscreen-btn--active");
+          // No native fullscreen support, use CSS
+          mapBlock.classList.add("osm-map-block--fullscreen");
+          fsBtn.classList.add("osm-fullscreen-btn--active");
         }
-      } catch (err) {
-        console.warn("pelican-osm: fullscreen request failed", err);
+      } else {
+        // Exit fullscreen
+        if (isNativeFullscreen) {
+          document.exitFullscreen();
+        }
+        mapBlock.classList.remove("osm-map-block--fullscreen");
+        fsBtn.classList.remove("osm-fullscreen-btn--active");
       }
     });
 
     mapContainer.parentElement.insertBefore(fsBtn, mapContainer.nextSibling);
 
+    // Listen for native fullscreen changes
     document.addEventListener("fullscreenchange", () => {
       setTimeout(() => {
-        // Give Leaflet time to detect the parent element resize
         if (window.L && window.L.Map) {
-          // Invalidate size on all maps (in case multiple maps exist)
           document.querySelectorAll(".osm-map").forEach((el) => {
             if (el._leaflet_map) {
               el._leaflet_map.invalidateSize();
@@ -152,6 +169,46 @@
           });
         }
       }, 100);
+    });
+
+    // Handle exit when pressing Esc
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        // Check if lightbox is open
+        const lightbox = document.getElementById("osm-photo-lightbox");
+        if (lightbox && lightbox.classList.contains("osm-lightbox--active")) {
+          // Let lightbox handle Esc
+          return;
+        }
+
+        // Exit fullscreen (both native and CSS)
+        const fullscreenMapBlock = document.querySelector(
+          ".osm-map-block--fullscreen",
+        );
+        if (fullscreenMapBlock) {
+          e.preventDefault();
+          fullscreenMapBlock.classList.remove("osm-map-block--fullscreen");
+          const btn = fullscreenMapBlock.querySelector(".osm-fullscreen-btn");
+          if (btn) btn.classList.remove("osm-fullscreen-btn--active");
+        }
+
+        // Also exit native fullscreen
+        if (document.fullscreenElement) {
+          e.preventDefault();
+          document.exitFullscreen().then(() => {
+            const fullscreenMapBlock = document.querySelector(
+              ".osm-map-block--fullscreen",
+            );
+            if (fullscreenMapBlock) {
+              fullscreenMapBlock.classList.remove("osm-map-block--fullscreen");
+              const btn = fullscreenMapBlock.querySelector(
+                ".osm-fullscreen-btn",
+              );
+              if (btn) btn.classList.remove("osm-fullscreen-btn--active");
+            }
+          });
+        }
+      }
     });
   }
 
@@ -220,9 +277,9 @@
     let currentImages = [];
 
     const lightboxHtml = `
-      <div id="osm-photo-lightbox" class="osm-lightbox">
+      <div id="osm-photo-lightbox" class="osm-lightbox" tabindex="-1">
         <div class="osm-lightbox-overlay"></div>
-        <div class="osm-lightbox-container">
+        <div class="osm-lightbox-container" tabindex="-1">
           <button class="osm-lightbox-close" title="Close (Esc)">&times;</button>
           <button class="osm-lightbox-prev" title="Previous (←)">&lsaquo;</button>
           <img class="osm-lightbox-image" src="" alt="">
@@ -249,6 +306,7 @@
       lightboxInfo.textContent = `${idx + 1} / ${images.length}`;
       lightbox.classList.add("osm-lightbox--active");
       document.body.style.overflow = "hidden";
+      lightbox.focus();
     }
 
     function hideLightbox() {
@@ -266,35 +324,62 @@
     closeBtn.addEventListener("click", hideLightbox);
     overlay.addEventListener("click", hideLightbox);
 
-    prevBtn.addEventListener("click", () => {
+    prevBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       goToImage(currentIdx - 1);
     });
 
-    nextBtn.addEventListener("click", () => {
+    nextBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       goToImage(currentIdx + 1);
     });
 
-    document.addEventListener("keydown", (e) => {
-      if (!lightbox.classList.contains("osm-lightbox--active")) return;
-      if (e.key === "Escape") hideLightbox();
-      if (e.key === "ArrowLeft") goToImage(currentIdx - 1);
-      if (e.key === "ArrowRight") goToImage(currentIdx + 1);
-    });
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (!lightbox.classList.contains("osm-lightbox--active")) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          hideLightbox();
+        }
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          e.stopPropagation();
+          goToImage(currentIdx - 1);
+        }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          e.stopPropagation();
+          goToImage(currentIdx + 1);
+        }
+      },
+      true,
+    ); // Use capture phase to intercept first
 
-    document.addEventListener("click", (e) => {
-      if (e.target.classList.contains("osm-popup-photo")) {
-        const img = e.target;
-        const src = img.getAttribute("data-fullsrc");
-        const idx = parseInt(img.getAttribute("data-photo-idx"), 10);
+    document.addEventListener(
+      "click",
+      (e) => {
+        if (e.target.classList.contains("osm-popup-photo")) {
+          e.preventDefault();
+          e.stopPropagation();
 
-        const gallery = img.closest(".osm-popup-gallery");
-        const images = Array.from(
-          gallery.querySelectorAll(".osm-popup-photo"),
-        ).map((el) => el.getAttribute("data-fullsrc"));
+          const img = e.target;
+          const src = img.getAttribute("data-fullsrc");
+          const idx = parseInt(img.getAttribute("data-photo-idx"), 10);
 
-        showLightbox(images.indexOf(src), images);
-      }
-    });
+          const gallery = img.closest(".osm-popup-gallery");
+          const images = Array.from(
+            gallery.querySelectorAll(".osm-popup-photo"),
+          ).map((el) => el.getAttribute("data-fullsrc"));
+
+          showLightbox(images.indexOf(src), images);
+        }
+      },
+      true,
+    ); // Use capture phase
   }
 
   function initAllMaps() {
