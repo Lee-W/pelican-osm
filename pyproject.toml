@@ -20,7 +20,6 @@ classifiers = [
   "Environment :: Plugins",
   "Framework :: Pelican",
   "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
   "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
