@@ -11,6 +11,7 @@
 - File-level metadata (anime title, tags, country…) applied as defaults to every place in the file
 - Per-place popup with auto-generated OSM and Google Maps links
 - `tags` list rendered as inline badges in the popup
+- `urls` list rendered as labelled links in the popup and list table
 - All extra YAML fields displayed in the popup automatically
 - Fully class-based CSS — every visual detail overridable via custom properties
 - i18n via `window.OSM_I18N`
@@ -91,7 +92,7 @@ locations:
     country: 日本
     city: 東京
     tags: []       # overrides file-level tags for this place
-    photos: []
+    images: []
 ```
 
 Empty strings (`""`) and empty lists (`[]`) are automatically stripped — they won't appear in the popup or GeoJSON.
@@ -144,7 +145,7 @@ Each `{% place %}` shortcode renders its own independent map.
 | `{% place japan/mygo.yaml, taiwan.yml %}` | Multiple specs on one map |
 | `{% place_list japan/mygo.yaml %}` | Renders a table of places from one or more YAML specs. |
 
-```yaml
+```markdown
 {% place_list japan/tokyo %}
 {% place_list japan/tokyo, japan/kyoto %}
 ```
@@ -159,7 +160,7 @@ Each `{% place %}` shortcode renders its own independent map.
 | `lat` | ✅ | Latitude (float) |
 | `lon` | ✅ | Longitude (float) |
 | `tags` | — | List — rendered as inline badges in the popup |
-| `photos` | — | List — rendered as a gallery of images |
+| `images` | — | List — rendered as a photo gallery in the popup |
 | `urls` | — | List — rendered as links in the popup and list table; see below |
 | *(any)* | — | All other fields shown as `Key: Value` lines |
 

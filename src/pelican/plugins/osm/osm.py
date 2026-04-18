@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import re
 import shutil
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import urlparse
 
 import yaml
 from pelican.contents import Article, Page
@@ -404,11 +406,10 @@ def _render_place_list_html(
     def render_urls(urls: Any) -> str:
         if not urls or not isinstance(urls, list):
             return ""
-        from urllib.parse import urlparse
 
         def link_text(u: dict) -> str:
-            if u.get("label"):
-                return u["label"]
+            if label := u.get("label"):
+                return str(label)
             parsed = urlparse(u["href"])
             return parsed.netloc or "Link"
 
@@ -699,7 +700,6 @@ def _place_to_feature(
     article_url_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Convert a single place dict to a GeoJSON Feature."""
-    import datetime
 
     properties = {}
     for k, v in place.items():

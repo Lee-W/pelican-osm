@@ -33,7 +33,7 @@
   );
 
   // ── Field label resolution ────────────────────────────────────
-  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "photos", "urls"]);
+  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "images", "urls"]);
 
   function fieldLabel(key) {
     if (i18n.fieldLabels[key]) return i18n.fieldLabels[key];
