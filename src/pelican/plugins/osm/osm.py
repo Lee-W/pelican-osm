@@ -24,7 +24,7 @@ DEFAULT_MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 
 # Fields never shown as regular columns in the list table
-_LIST_RESERVED = frozenset(["name", "lat", "lon", "id", "images", "url", "tags"])
+_LIST_RESERVED = frozenset(["name", "lat", "lon", "id", "images", "urls", "tags"])
 
 
 def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
@@ -401,17 +401,25 @@ def _render_place_list_html(
             f'<span class="osm-badge osm-badge--tag">{t}</span>' for t in tags
         )
 
-    def render_url(urls: Any) -> str:
+    def render_urls(urls: Any) -> str:
         if not urls or not isinstance(urls, list):
             return ""
+        from urllib.parse import urlparse
+
+        def link_text(u: dict) -> str:
+            if u.get("label"):
+                return u["label"]
+            parsed = urlparse(u["href"])
+            return parsed.netloc or "Link"
+
         return " ".join(
-            f'<a href="{u["href"]}">{u.get("label") or "📖"}</a>'
+            f'<a href="{u["href"]}">{link_text(u)}</a>'
             for u in urls
             if isinstance(u, dict) and u.get("href")
         )
 
     has_tags = any(place.get("tags") for place in places)
-    has_url = any(place.get("url") for place in places)
+    has_url = any(place.get("urls") for place in places)
 
     # Header
     headers = ["<th>" + field_labels.get("name", "Name") + "</th>"]
@@ -419,7 +427,7 @@ def _render_place_list_html(
         headers.append("<th>" + field_labels.get("tags", "Tags") + "</th>")
     headers += [f"<th>{col_header(f)}</th>" for f in fields]
     if has_url:
-        headers.append("<th>" + field_labels.get("url", "Post") + "</th>")
+        headers.append("<th>" + field_labels.get("urls", "Links") + "</th>")
 
     # Rows
     rows: list[str] = []
@@ -430,7 +438,7 @@ def _render_place_list_html(
         for f in fields:
             cells.append(f"<td>{place.get(f, '')}</td>")
         if has_url:
-            cells.append(f"<td>{render_url(place.get('url', []))}</td>")
+            cells.append(f"<td>{render_urls(place.get('urls', []))}</td>")
         rows.append("<tr>" + "".join(cells) + "</tr>")
 
     return (
@@ -534,10 +542,10 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
             loaded = resolver.resolve(spec)
             places.extend(p for p in loaded if _validate_place(p, spec))
 
-        # Normalize url fields using the incrementally-built article URL map
+        # Normalize urls fields using the incrementally-built article URL map
         for place in places:
-            if "url" in place:
-                place["url"] = _normalize_url_field(place["url"], _article_url_map)
+            if "urls" in place:
+                place["urls"] = _normalize_url_field(place["urls"], _article_url_map)
 
         field_labels: dict[str, str] = settings.get("OSM_LIST_FIELD_LABELS", {})
         list_fields: list[str] = settings.get("OSM_LIST_FIELDS", [])
@@ -550,10 +558,11 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
 _resolver: PlaceResolver | None = None
 _settings: dict = {}
 _article_url_map: dict[str, str] = {}
+_content_path: Path | None = None
 
 
 def _init_resolver(pelican_obj) -> None:
-    global _resolver, _settings, _article_url_map
+    global _resolver, _settings, _article_url_map, _content_path
     _article_url_map = {}
     _settings = pelican_obj.settings
 
@@ -567,6 +576,8 @@ def _init_resolver(pelican_obj) -> None:
         if conf_file:
             content_path = Path(conf_file).parent / raw_path
         content_path = content_path.resolve()
+
+    _content_path = content_path
 
     places_root = pelican_obj.settings.get("OSM_PLACES_ROOT", DEFAULT_PLACES_ROOT)
     root = Path(places_root)
@@ -584,11 +595,20 @@ def _process_article(content) -> None:
 
     # Build the article URL map incrementally so place_list shortcodes on
     # pages can resolve {filename} references to articles processed earlier.
+    # Keys are stored both as absolute paths and as content-relative paths so
+    # that {filename}posts/foo.md references resolve correctly.
     siteurl = _settings.get("SITEURL", "").rstrip("/")
     src = getattr(content, "source_path", None)
     url = getattr(content, "url", None)
     if src and url:
-        _article_url_map[src] = siteurl + "/" + url.lstrip("/")
+        abs_url = siteurl + "/" + url.lstrip("/")
+        _article_url_map[src] = abs_url
+        if _content_path:
+            try:
+                rel = Path(src).relative_to(_content_path)
+                _article_url_map[str(rel)] = abs_url
+            except ValueError:
+                pass
 
     if _resolver is None:
         return
@@ -632,20 +652,20 @@ def _normalize_url_field(
     url_value: Any,
     article_url_map: dict[str, str] | None,
 ) -> list[dict[str, str | None]]:
-    """Normalize the ``url`` field to a list of ``{label, href}`` dicts.
+    """Normalize the ``urls`` field to a list of ``{label, href}`` dicts.
 
     Accepted input formats::
 
         # plain string
-        url: "https://example.com"
+        urls: "https://example.com"
 
         # single object
-        url:
+        urls:
           label: "2024"
           href: "{filename}posts/review/2024/my-post.md"
 
         # list of objects
-        url:
+        urls:
           - label: "2023"
             href: "{filename}posts/review/2023/visit.md"
           - label: "2024"
@@ -691,8 +711,8 @@ def _place_to_feature(
             v = v.isoformat()
         properties[k] = v
 
-    if "url" in properties:
-        properties["url"] = _normalize_url_field(properties["url"], article_url_map)
+    if "urls" in properties:
+        properties["urls"] = _normalize_url_field(properties["urls"], article_url_map)
 
     return {
         "type": "Feature",

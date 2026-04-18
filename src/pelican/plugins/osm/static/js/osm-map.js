@@ -33,7 +33,7 @@
   );
 
   // ── Field label resolution ────────────────────────────────────
-  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "photos", "url"]);
+  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "photos", "urls"]);
 
   function fieldLabel(key) {
     if (i18n.fieldLabels[key]) return i18n.fieldLabels[key];
@@ -66,20 +66,19 @@
       `<a href="${googleUrl}" target="_blank" rel="noopener">${i18n.googleLink}</a>` +
       `</div>`;
 
-    // url is normalized by Python to [{label, href}, ...]; also accept plain string
-    const urlEntries = Array.isArray(props.url)
-      ? props.url
-      : props.url
-      ? [{ label: null, href: props.url }]
-      : [];
+    // urls is normalized by Python to [{label, href}, ...]
+    const urlEntries = Array.isArray(props.urls) ? props.urls : [];
     const postLink =
       urlEntries.length > 0
         ? `<div class="osm-popup-post-link">` +
           urlEntries
-            .map(
-              ({ label, href }) =>
-                `<a href="${href}">${i18n.postLinkPrefix || "📖"}${label ? " " + label : ""}</a>`,
-            )
+            .map(({ label, href }) => {
+                let text = label;
+                if (!text) {
+                  try { text = new URL(href).hostname; } catch { text = "Link"; }
+                }
+                return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+              })
             .join(" | ") +
           `</div>`
         : "";
