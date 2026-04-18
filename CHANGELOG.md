@@ -1,3 +1,9 @@
+## 0.5.0 (2026-04-18)
+
+### Feat
+
+- add place_list shortcode and url field support in popups
+
 ## 0.4.2 (2026-03-26)
 
 ### Fix
