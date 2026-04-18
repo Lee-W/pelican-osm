@@ -1,3 +1,10 @@
+## 0.5.1 (2026-04-18)
+
+### Fix
+
+- correct photos→images field name, update docs for urls rename
+- rename url → urls, fix {filename} resolution, improve link display
+
 ## 0.5.0 (2026-04-18)
 
 ### Feat
