@@ -5,6 +5,7 @@
 ## Features
 
 - `{% place %}` shortcode renders an independent interactive map per shortcode
+- `{% place_list %}` shortcode renders a table of places from one or more YAML specs
 - YAML files converted to GeoJSON at build time — JS fetches them at runtime
 - Flexible spec syntax: single file, single place via `#id`, entire folder, or comma-separated mix
 - File-level metadata (anime title, tags, country…) applied as defaults to every place in the file
@@ -141,6 +142,12 @@ Each `{% place %}` shortcode renders its own independent map.
 | `{% place japan/ %}` or `{% place japan %}` | All YAML files in a folder, recursively |
 | `{% place . %}` | All YAML files under the root |
 | `{% place japan/mygo.yaml, taiwan.yml %}` | Multiple specs on one map |
+| `{% place_list japan/mygo.yaml %}` | Renders a table of places from one or more YAML specs. |
+
+```yaml
+{% place_list japan/tokyo %}
+{% place_list japan/tokyo, japan/kyoto %}
+```
 
 > **Note:** Fragment (`#`) syntax filters which places appear in the popup, but the map still fetches the full GeoJSON file. A future version may support per-feature filtering.
 
@@ -152,10 +159,34 @@ Each `{% place %}` shortcode renders its own independent map.
 | `lat` | ✅ | Latitude (float) |
 | `lon` | ✅ | Longitude (float) |
 | `tags` | — | List — rendered as inline badges in the popup |
-| `photos` | — | List — reserved, not shown in popup |
+| `photos` | — | List — rendered as a gallery of images |
+| `url` | — | List — reserved, see below for detail |
 | *(any)* | — | All other fields shown as `Key: Value` lines |
 
 OSM and Google Maps links are **always auto-generated** from `lat`/`lon`.
+
+### `url` field
+
+The `url` field on a place is now rendered as a post link both in the map popup and in the list table. Three formats are accepted:
+
+```yaml
+# plain string
+url: "https://example.com/my-post"
+
+# single object with optional label
+url:
+  label: "2024"
+  href: "{filename}posts/review/2024/my-post.md"
+
+# list of objects (multiple links)
+url:
+  - label: "2023"
+    href: "{filename}posts/review/2023/visit.md"
+  - label: "2024"
+    href: "{filename}posts/review/2024/visit.md"
+```
+
+`{filename}` references are resolved to absolute URLs using Pelican's content URL map.
 
 ## GeoJSON output
 
@@ -178,6 +209,9 @@ The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/
 | `OSM_MAP_TILE` | OSM standard tiles | Leaflet tile URL template |
 | `OSM_MAP_ATTRIBUTION` | OSM attribution HTML | Attribution string shown on the map |
 | `OSM_STATIC_PREFIX` | `"/static"` | URL prefix for generated GeoJSON files |
+| `OSM_LIST_SHORTCODE` | `"place_list"` | Shortcode name |
+| `OSM_LIST_FIELDS` | `[]` (auto) | Ordered list of field keys to show as columns. When empty, all non-reserved fields found in the data are used. |
+| `OSM_LIST_FIELD_LABELS` | `{}` | Override column header labels, e.g. `{"date": "Visited", "name": "Place"}` |
 
 ## Customising the CSS
 

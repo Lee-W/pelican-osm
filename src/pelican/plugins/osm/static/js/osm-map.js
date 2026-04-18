@@ -33,7 +33,7 @@
   );
 
   // ── Field label resolution ────────────────────────────────────
-  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "photos"]);
+  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "photos", "url"]);
 
   function fieldLabel(key) {
     if (i18n.fieldLabels[key]) return i18n.fieldLabels[key];
@@ -66,6 +66,24 @@
       `<a href="${googleUrl}" target="_blank" rel="noopener">${i18n.googleLink}</a>` +
       `</div>`;
 
+    // url is normalized by Python to [{label, href}, ...]; also accept plain string
+    const urlEntries = Array.isArray(props.url)
+      ? props.url
+      : props.url
+      ? [{ label: null, href: props.url }]
+      : [];
+    const postLink =
+      urlEntries.length > 0
+        ? `<div class="osm-popup-post-link">` +
+          urlEntries
+            .map(
+              ({ label, href }) =>
+                `<a href="${href}">${i18n.postLinkPrefix || "📖"}${label ? " " + label : ""}</a>`,
+            )
+            .join(" | ") +
+          `</div>`
+        : "";
+
     const photoGallery =
       images && images.length > 0
         ? `<div class="osm-popup-gallery">` +
@@ -84,6 +102,7 @@
       tagBadges +
       fieldLines +
       links +
+      postLink +
       photoGallery +
       `</div>`
     );
@@ -304,6 +323,23 @@
       currentImages = images;
       lightboxImg.src = images[idx];
       lightboxInfo.textContent = `${idx + 1} / ${images.length}`;
+
+      // In native fullscreen only the fullscreen element and its descendants
+      // are rendered — move the lightbox inside it so it stays visible.
+      // Use position:absolute (not fixed) so it fills the fullscreen element
+      // reliably across browsers (Firefox ignores fixed z-index in this context).
+      const fsEl = document.fullscreenElement;
+      if (fsEl) {
+        if (!fsEl.contains(lightbox)) fsEl.appendChild(lightbox);
+        lightbox.style.position = "absolute";
+        lightbox.style.zIndex = "2147483647";
+      } else {
+        if (lightbox.parentElement !== document.body)
+          document.body.appendChild(lightbox);
+        lightbox.style.position = "";
+        lightbox.style.zIndex = "";
+      }
+
       lightbox.classList.add("osm-lightbox--active");
       document.body.style.overflow = "hidden";
       lightbox.focus();
@@ -312,6 +348,12 @@
     function hideLightbox() {
       lightbox.classList.remove("osm-lightbox--active");
       document.body.style.overflow = "";
+      // Return lightbox to body and reset inline styles for next use.
+      if (lightbox.parentElement !== document.body) {
+        document.body.appendChild(lightbox);
+      }
+      lightbox.style.position = "";
+      lightbox.style.zIndex = "";
     }
 
     function goToImage(idx) {
