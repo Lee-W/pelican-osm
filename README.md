@@ -160,31 +160,33 @@ Each `{% place %}` shortcode renders its own independent map.
 | `lon` | ✅ | Longitude (float) |
 | `tags` | — | List — rendered as inline badges in the popup |
 | `photos` | — | List — rendered as a gallery of images |
-| `url` | — | List — reserved, see below for detail |
+| `urls` | — | List — rendered as links in the popup and list table; see below |
 | *(any)* | — | All other fields shown as `Key: Value` lines |
 
 OSM and Google Maps links are **always auto-generated** from `lat`/`lon`.
 
-### `url` field
+### `urls` field
 
-The `url` field on a place is now rendered as a post link both in the map popup and in the list table. Three formats are accepted:
+The `urls` field renders clickable links in both the map popup and the `place_list` table. Three formats are accepted:
 
 ```yaml
 # plain string
-url: "https://example.com/my-post"
+urls: "https://example.com/my-post"
 
 # single object with optional label
-url:
+urls:
   label: "2024"
   href: "{filename}posts/review/2024/my-post.md"
 
 # list of objects (multiple links)
-url:
+urls:
   - label: "2023"
     href: "{filename}posts/review/2023/visit.md"
   - label: "2024"
     href: "{filename}posts/review/2024/visit.md"
 ```
+
+The `label` becomes the link text. When omitted, the link text falls back to the URL's hostname (e.g. `example.com`).
 
 `{filename}` references are resolved to absolute URLs using Pelican's content URL map.
 
@@ -270,8 +272,13 @@ All user-visible strings default to English. Set `window.OSM_I18N` **before** lo
 <script>
 window.OSM_I18N = {
   // Map link labels (defaults: "OSM", "Google")
-  osmLink:    "OSM",
-  googleLink: "Google",
+  osmLink:      "OSM",
+  googleLink:   "Google",
+
+  // Fallback link text for urls entries with no label.
+  // Defaults to the URL's hostname (e.g. "example.com").
+  // Only used when the hostname cannot be parsed.
+  urlLinkLabel: "Link",
 
   // Field label overrides — YAML key → display label
   // Unlisted keys fall back to capitalised key name (e.g. "category" → "Category")
