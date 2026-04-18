@@ -17,10 +17,14 @@ from pelican import signals
 log = logging.getLogger(__name__)
 
 DEFAULT_SHORTCODE = "place"
+DEFAULT_LIST_SHORTCODE = "place_list"
 DEFAULT_PLACES_ROOT = "places"  # relative to Pelican's PATH (content dir)
 DEFAULT_MAP_HEIGHT = "400px"
 DEFAULT_MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+
+# Fields never shown as regular columns in the list table
+_LIST_RESERVED = frozenset(["name", "lat", "lon", "id", "images", "url", "tags"])
 
 
 def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
@@ -362,8 +366,85 @@ def _render_place_html(
     )
 
 
+def _render_place_list_html(
+    places: list[dict[str, Any]],
+    fields: list[str],
+    field_labels: dict[str, str],
+) -> str:
+    """Render an HTML table for a list of places.
+
+    ``fields`` controls which columns appear (in order) between the Name and
+    Post columns.  If empty, every non-reserved field found in the data is
+    used automatically.
+    """
+    if not places:
+        return "<!-- pelican-osm: no places for list -->"
+
+    # Auto-detect columns when none are configured
+    if not fields:
+        seen: list[str] = []
+        for place in places:
+            for k in place:
+                if k not in _LIST_RESERVED and k not in seen:
+                    seen.append(k)
+        fields = seen
+
+    def col_header(f: str) -> str:
+        return field_labels.get(f, f.replace("_", " ").capitalize())
+
+    def render_tags(tags: Any) -> str:
+        if not tags:
+            return ""
+        if isinstance(tags, str):
+            tags = [tags]
+        return " ".join(
+            f'<span class="osm-badge osm-badge--tag">{t}</span>' for t in tags
+        )
+
+    def render_url(urls: Any) -> str:
+        if not urls or not isinstance(urls, list):
+            return ""
+        return " ".join(
+            f'<a href="{u["href"]}">{u.get("label") or "📖"}</a>'
+            for u in urls
+            if isinstance(u, dict) and u.get("href")
+        )
+
+    has_tags = any(place.get("tags") for place in places)
+    has_url = any(place.get("url") for place in places)
+
+    # Header
+    headers = ["<th>" + field_labels.get("name", "Name") + "</th>"]
+    if has_tags:
+        headers.append("<th>" + field_labels.get("tags", "Tags") + "</th>")
+    headers += [f"<th>{col_header(f)}</th>" for f in fields]
+    if has_url:
+        headers.append("<th>" + field_labels.get("url", "Post") + "</th>")
+
+    # Rows
+    rows: list[str] = []
+    for place in places:
+        cells = [f"<td>{place.get('name', '')}</td>"]
+        if has_tags:
+            cells.append(f"<td>{render_tags(place.get('tags', []))}</td>")
+        for f in fields:
+            cells.append(f"<td>{place.get(f, '')}</td>")
+        if has_url:
+            cells.append(f"<td>{render_url(place.get('url', []))}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    return (
+        '<div class="osm-place-list-wrapper">\n'
+        '<table class="osm-place-list">\n'
+        "<thead><tr>" + "".join(headers) + "</tr></thead>\n"
+        "<tbody>\n" + "\n".join(rows) + "\n</tbody>\n"
+        "</table>\n"
+        "</div>"
+    )
+
+
 def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> str:
-    """Replace all {% place ... %} shortcodes in content."""
+    """Replace all {% place ... %} and {% place_list ... %} shortcodes in content."""
     shortcode = settings.get("OSM_SHORTCODE", DEFAULT_SHORTCODE)
     map_height = settings.get("OSM_MAP_HEIGHT", DEFAULT_MAP_HEIGHT)
     tile_url = settings.get("OSM_MAP_TILE", DEFAULT_MAP_TILE)
@@ -438,15 +519,42 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
         )
 
     result = cast(str, pattern.sub(replace, content))
+
+    # ── place_list shortcode ──────────────────────────────────────
+    list_shortcode = settings.get("OSM_LIST_SHORTCODE", DEFAULT_LIST_SHORTCODE)
+    list_pattern = re.compile(
+        r"\{%\s*" + re.escape(list_shortcode) + r"\s+(.+?)\s*%\}",
+        re.DOTALL,
+    )
+
+    def replace_list(match: re.Match) -> str:
+        specs = [s.strip() for s in match.group(1).split(",") if s.strip()]
+        places: list[dict[str, Any]] = []
+        for spec in specs:
+            loaded = resolver.resolve(spec)
+            places.extend(p for p in loaded if _validate_place(p, spec))
+
+        # Normalize url fields using the incrementally-built article URL map
+        for place in places:
+            if "url" in place:
+                place["url"] = _normalize_url_field(place["url"], _article_url_map)
+
+        field_labels: dict[str, str] = settings.get("OSM_LIST_FIELD_LABELS", {})
+        list_fields: list[str] = settings.get("OSM_LIST_FIELDS", [])
+        return _render_place_list_html(places, list_fields, field_labels)
+
+    result = cast(str, list_pattern.sub(replace_list, result))
     return result
 
 
 _resolver: PlaceResolver | None = None
 _settings: dict = {}
+_article_url_map: dict[str, str] = {}
 
 
 def _init_resolver(pelican_obj) -> None:
-    global _resolver, _settings
+    global _resolver, _settings, _article_url_map
+    _article_url_map = {}
     _settings = pelican_obj.settings
 
     # Pelican's PATH setting may be relative.
@@ -473,17 +581,103 @@ def _init_resolver(pelican_obj) -> None:
 def _process_article(content) -> None:
     if not isinstance(content, (Article, Page)):
         return
+
+    # Build the article URL map incrementally so place_list shortcodes on
+    # pages can resolve {filename} references to articles processed earlier.
+    siteurl = _settings.get("SITEURL", "").rstrip("/")
+    src = getattr(content, "source_path", None)
+    url = getattr(content, "url", None)
+    if src and url:
+        _article_url_map[src] = siteurl + "/" + url.lstrip("/")
+
     if _resolver is None:
         return
 
-    # Process the raw source before Markdown/rST rendering
-    # We hook into _content (already rendered HTML) and work on source
-    # Pelican stores source in content._content after rendering; we patch it.
     if hasattr(content, "_content"):
         content._content = _process_content(content._content, _resolver, _settings)
 
 
-def _place_to_feature(place: dict[str, Any]) -> dict[str, Any]:
+def _build_article_url_map(pelican_obj) -> dict[str, str]:
+    """Return a map of source_path → absolute URL for every article and page."""
+    siteurl = pelican_obj.settings.get("SITEURL", "").rstrip("/")
+    url_map: dict[str, str] = {}
+    for generator in getattr(pelican_obj, "generators", []):
+        for content in (
+            *getattr(generator, "articles", []),
+            *getattr(generator, "pages", []),
+        ):
+            src = getattr(content, "source_path", None)
+            url = getattr(content, "url", None)
+            if src and url:
+                url_map[src] = siteurl + "/" + url.lstrip("/")
+    return url_map
+
+
+def _resolve_filename_url(url: str, article_url_map: dict[str, str]) -> str:
+    """Resolve a ``{filename}/path/to/post.md`` reference to an absolute URL.
+
+    If ``url`` does not start with ``{filename}`` it is returned unchanged.
+    """
+    if not url.startswith("{filename}"):
+        return url
+    path_part = url[len("{filename}") :].lstrip("/")
+    resolved = article_url_map.get(path_part)
+    if resolved is None:
+        log.warning("pelican-osm: could not resolve {filename} URL: %s", url)
+        return url
+    return resolved
+
+
+def _normalize_url_field(
+    url_value: Any,
+    article_url_map: dict[str, str] | None,
+) -> list[dict[str, str | None]]:
+    """Normalize the ``url`` field to a list of ``{label, href}`` dicts.
+
+    Accepted input formats::
+
+        # plain string
+        url: "https://example.com"
+
+        # single object
+        url:
+          label: "2024"
+          href: "{filename}posts/review/2024/my-post.md"
+
+        # list of objects
+        url:
+          - label: "2023"
+            href: "{filename}posts/review/2023/visit.md"
+          - label: "2024"
+            href: "{filename}posts/review/2024/visit.md"
+    """
+
+    def _resolve(href: str) -> str:
+        return _resolve_filename_url(href, article_url_map) if article_url_map else href
+
+    def _entry(item: Any) -> dict[str, str | None] | None:
+        if isinstance(item, str):
+            return {"label": None, "href": _resolve(item)}
+        if isinstance(item, dict):
+            href = str(item.get("href", ""))
+            label = item.get("label")
+            return {
+                "label": str(label) if label is not None else None,
+                "href": _resolve(href),
+            }
+        return None
+
+    if isinstance(url_value, list):
+        return [e for item in url_value if (e := _entry(item)) is not None]
+
+    entry = _entry(url_value)
+    return [entry] if entry is not None else []
+
+
+def _place_to_feature(
+    place: dict[str, Any],
+    article_url_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Convert a single place dict to a GeoJSON Feature."""
     import datetime
 
@@ -497,6 +691,9 @@ def _place_to_feature(place: dict[str, Any]) -> dict[str, Any]:
             v = v.isoformat()
         properties[k] = v
 
+    if "url" in properties:
+        properties["url"] = _normalize_url_field(properties["url"], article_url_map)
+
     return {
         "type": "Feature",
         "geometry": {
@@ -507,13 +704,16 @@ def _place_to_feature(place: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _yaml_to_geojson(yaml_path: Path) -> dict[str, Any]:
+def _yaml_to_geojson(
+    yaml_path: Path,
+    article_url_map: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Load a YAML file and return a GeoJSON FeatureCollection."""
     places = _load_yaml_file(yaml_path)
     valid = [p for p in places if _validate_place(p, str(yaml_path))]
     return {
         "type": "FeatureCollection",
-        "features": [_place_to_feature(p) for p in valid],
+        "features": [_place_to_feature(p, article_url_map) for p in valid],
     }
 
 
@@ -535,7 +735,7 @@ def _export_geojson(pelican_obj) -> None:
         dest = output / "static" / "places" / rel.with_suffix(".geojson")
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        geojson = _yaml_to_geojson(yaml_path)
+        geojson = _yaml_to_geojson(yaml_path, _article_url_map)
         dest.write_text(
             json.dumps(geojson, ensure_ascii=False, indent=2),
             encoding="utf-8",
