@@ -33,7 +33,15 @@
   );
 
   // ── Field label resolution ────────────────────────────────────
-  const HIDDEN_FIELDS = new Set(["name", "lat", "lon", "id", "tags", "images", "urls"]);
+  const HIDDEN_FIELDS = new Set([
+    "name",
+    "lat",
+    "lon",
+    "id",
+    "tags",
+    "images",
+    "urls",
+  ]);
 
   function fieldLabel(key) {
     if (i18n.fieldLabels[key]) return i18n.fieldLabels[key];
@@ -61,9 +69,9 @@
     const googleUrl = `https://www.google.com/maps?q=${lat},${lon}`;
     const links =
       `<div class="osm-popup-links">` +
-      `🔗 <a href="${osmUrl}" target="_blank" rel="noopener">${i18n.osmLink}</a>` +
-      ` | ` +
-      `<a href="${googleUrl}" target="_blank" rel="noopener">${i18n.googleLink}</a>` +
+      `<a href="${osmUrl}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>` +
+      ` · ` +
+      `<a href="${googleUrl}" target="_blank" rel="noopener" title="Google Maps">📍</a>` +
       `</div>`;
 
     // urls is normalized by Python to [{label, href}, ...]
@@ -73,12 +81,16 @@
         ? `<div class="osm-popup-post-link">` +
           urlEntries
             .map(({ label, href }) => {
-                let text = label;
-                if (!text) {
-                  try { text = new URL(href).hostname; } catch { text = "Link"; }
+              let text = label;
+              if (!text) {
+                try {
+                  text = new URL(href).hostname;
+                } catch {
+                  text = "Link";
                 }
-                return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
-              })
+              }
+              return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+            })
             .join(" | ") +
           `</div>`
         : "";
@@ -423,8 +435,98 @@
     ); // Use capture phase
   }
 
+  // ── Sortable place-list tables ────────────────────────────────
+  function cellSortValue(cell) {
+    // Prefer explicit data-sort-value (set on Name cells to exclude icon text)
+    if (cell.dataset.sortValue !== undefined) return cell.dataset.sortValue;
+    return cell.textContent.trim();
+  }
+
+  function compareValues(a, b, dir) {
+    // Numeric
+    const aN = parseFloat(a),
+      bN = parseFloat(b);
+    if (!isNaN(aN) && !isNaN(bN)) return dir === "asc" ? aN - bN : bN - aN;
+    // Date (YYYY-MM-DD or similar)
+    const aD = Date.parse(a),
+      bD = Date.parse(b);
+    if (!isNaN(aD) && !isNaN(bD)) return dir === "asc" ? aD - bD : bD - aD;
+    // String
+    return dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
+  }
+
+  function setSortIcon(th, dir) {
+    const existing = th.querySelector(".osm-sort-icon");
+    if (existing) existing.remove();
+    const icon = document.createElement("span");
+    icon.className = "osm-sort-icon";
+    if (dir === "asc") {
+      icon.textContent = "▲";
+      icon.dataset.active = "1";
+    } else if (dir === "desc") {
+      icon.textContent = "▼";
+      icon.dataset.active = "1";
+    } else {
+      icon.textContent = "⇅";
+    } // unsorted hint
+    th.appendChild(icon);
+  }
+
+  function sortTable(table, th, colIdx, originalRows) {
+    const thElements = table.querySelectorAll("thead th");
+    const currentDir = th.dataset.sort; // "asc" | "desc" | undefined
+    // Cycle: none → asc → desc → none
+    const newDir = !currentDir ? "asc" : currentDir === "asc" ? "desc" : null;
+
+    // Reset all headers to neutral
+
+    thElements.forEach((h) => {
+      delete h.dataset.sort;
+      setSortIcon(h, null);
+    });
+
+    const tbody = table.querySelector("tbody");
+
+    if (newDir === null) {
+      // Restore original order
+      originalRows.forEach((r) => tbody.appendChild(r));
+      return;
+    }
+
+    th.dataset.sort = newDir;
+    setSortIcon(th, newDir);
+
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    rows.sort((a, b) =>
+      compareValues(
+        cellSortValue(a.cells[colIdx]),
+        cellSortValue(b.cells[colIdx]),
+        newDir,
+      ),
+    );
+    rows.forEach((r) => tbody.appendChild(r));
+  }
+
+  function initSortableTables() {
+    document.querySelectorAll(".osm-place-list").forEach((table) => {
+      const tbody = table.querySelector("tbody");
+      // Snapshot original row order for reset
+      const originalRows = Array.from(tbody.querySelectorAll("tr"));
+
+      table.querySelectorAll("thead th").forEach((th, colIdx) => {
+        th.setAttribute("data-sortable", "");
+        th.style.cursor = "pointer";
+        setSortIcon(th, null); // show ⇅ on every header from the start
+        th.addEventListener("click", () =>
+          sortTable(table, th, colIdx, originalRows),
+        );
+      });
+    });
+  }
+
   function initAllMaps() {
     setupPhotoLightbox();
+    initSortableTables();
     document.querySelectorAll(".osm-map").forEach(initMap);
   }
 

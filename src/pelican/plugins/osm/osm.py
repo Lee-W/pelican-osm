@@ -419,6 +419,23 @@ def _render_place_list_html(
             if isinstance(u, dict) and u.get("href")
         )
 
+    def render_name_cell(place: dict[str, Any]) -> str:
+        name = place.get("name", "")
+        lat = place.get("lat")
+        lon = place.get("lon")
+        if lat is not None and lon is not None:
+            osm_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=17"
+            gmaps_url = f"https://maps.google.com/?q={lat},{lon}"
+            map_links = (
+                f'<span class="osm-list-map-links">'
+                f'<a href="{osm_url}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>'
+                f'<span class="osm-list-map-sep" aria-hidden="true">·</span>'
+                f'<a href="{gmaps_url}" target="_blank" rel="noopener" title="Google Maps">📍</a>'
+                f"</span>"
+            )
+            return f'<td data-sort-value="{name}">{name}{map_links}</td>'
+        return f'<td data-sort-value="{name}">{name}</td>'
+
     has_tags = any(place.get("tags") for place in places)
     has_url = any(place.get("urls") for place in places)
 
@@ -433,7 +450,7 @@ def _render_place_list_html(
     # Rows
     rows: list[str] = []
     for place in places:
-        cells = [f"<td>{place.get('name', '')}</td>"]
+        cells = [render_name_cell(place)]
         if has_tags:
             cells.append(f"<td>{render_tags(place.get('tags', []))}</td>")
         for f in fields:
