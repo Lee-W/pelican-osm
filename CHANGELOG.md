@@ -1,3 +1,9 @@
+## 0.6.0 (2026-04-19)
+
+### Feat
+
+- use sticky table and add osm, google map link to table
+
 ## 0.5.1 (2026-04-18)
 
 ### Fix
