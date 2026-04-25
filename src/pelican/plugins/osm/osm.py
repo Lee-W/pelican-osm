@@ -362,6 +362,7 @@ def _render_place_html(
         f'data-tile="{tile_attr}" '
         f'data-attribution="{attribution_attr}"'
         f"{images_attr}>"
+        f'<div class="osm-map-loading"><div class="osm-map-spinner"></div></div>'
         f"</div>\n"
         f'  <div class="osm-map-caption">{captions}</div>\n'
         f"</div>"
@@ -465,6 +466,7 @@ def _render_place_list_html(
         "<thead><tr>" + "".join(headers) + "</tr></thead>\n"
         "<tbody>\n" + "\n".join(rows) + "\n</tbody>\n"
         "</table>\n"
+        '<div class="osm-place-list-count"></div>\n'
         "</div>"
     )
 

@@ -95,6 +95,32 @@
   min-height: 200px;
   background: #e8e8e8;
   display: block;
+  position: relative;
+}
+
+/* --------------------------------------------------------------------------
+   Loading indicator  (removed by JS once the map initialises)
+   -------------------------------------------------------------------------- */
+.osm-map-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.osm-map-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(0, 0, 0, 0.15);
+  border-top-color: #666;
+  border-radius: 50%;
+  animation: osm-spin 0.7s linear infinite;
+}
+
+@keyframes osm-spin {
+  to { transform: rotate(360deg); }
 }
 
 .osm-map-block:fullscreen .osm-map {
@@ -369,9 +395,11 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
 }
 
-.osm-map-caption:hover {
+.osm-map-caption:hover,
+.osm-map-caption--expanded {
   white-space: normal;
   overflow: visible;
 }
@@ -542,6 +570,42 @@
 
 .osm-place-list td a:hover {
   text-decoration: underline;
+}
+
+/* Row count caption below table */
+.osm-place-list-count {
+  text-align: left;
+  font-size: 0.82em;
+  color: #999;
+  padding: 0.3em 0.75em 0;
+}
+
+/* Tag badges in tables are clickable to filter */
+.osm-place-list .osm-badge--tag {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.osm-place-list .osm-badge--tag:hover {
+  opacity: 0.7;
+}
+
+/* Tag filter chip (shown when a tag filter is active) */
+.osm-tag-filter-chip {
+  display: inline-block;
+  font-size: 0.82em;
+  padding: 0.1em 0.5em;
+  margin-right: 0.5em;
+  border-radius: 999px;
+  background: var(--osm-badge-tag-bg, #e8e8e8);
+  color: var(--osm-badge-tag-color, #444);
+  cursor: pointer;
+  font-weight: 600;
+  transition: opacity 0.15s;
+}
+
+.osm-tag-filter-chip:hover {
+  opacity: 0.7;
 }
 
 /* Sticky first column — keeps Name visible while scrolling horizontally */
