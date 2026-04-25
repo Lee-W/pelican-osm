@@ -599,7 +599,7 @@ wheels = [
 
 [[package]]
 name = "pelican-osm"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "pelican" },

@@ -1,3 +1,10 @@
+## 0.7.0 (2026-04-25)
+
+### Feat
+
+- add reset view, map tag filtering, lazy init, deep linking, and more
+- add marker clustering, loading spinner, tag filtering, and mobile UX fixes
+
 ## 0.6.0 (2026-04-19)
 
 ### Feat
