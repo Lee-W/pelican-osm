@@ -22,13 +22,48 @@
   const DEFAULT_I18N = {
     osmLink: "OSM",
     googleLink: "Google",
+    placeCount: (n) => `${n} place${n === 1 ? "" : "s"}`,
     fieldLabels: {},
   };
 
-  const i18n = Object.assign({}, DEFAULT_I18N, window.OSM_I18N || {});
+  // Built-in translations keyed by language prefix
+  const BUILTIN_I18N = {
+    zh: {
+      placeCount: (n) => `${n} 個地點`,
+      fieldLabels: {
+        date: "日期",
+        category: "分類",
+        type: "分類",
+        city: "城市",
+        country: "國家",
+        notes: "備註",
+        note: "備註",
+        anime: "作品",
+        work: "作品",
+        series: "系列",
+      },
+    },
+    ja: {
+      placeCount: (n) => `${n} 件`,
+      fieldLabels: {},
+    },
+  };
+
+  // Detect language from <html lang="...">
+  function detectBuiltinI18n() {
+    const lang = (document.documentElement.lang || "").toLowerCase();
+    if (!lang) return {};
+    // Try exact match first (e.g. "zh-tw"), then prefix (e.g. "zh")
+    return BUILTIN_I18N[lang] || BUILTIN_I18N[lang.split("-")[0]] || {};
+  }
+
+  const detectedI18n = detectBuiltinI18n();
+  // Priority: user overrides > detected language > defaults
+  const i18n = Object.assign({}, DEFAULT_I18N, detectedI18n, window.OSM_I18N || {});
   i18n.fieldLabels = Object.assign(
     {},
     DEFAULT_I18N.fieldLabels,
+    detectedI18n.fieldLabels || {},
     (window.OSM_I18N || {}).fieldLabels,
   );
 
@@ -120,7 +155,7 @@
   }
 
   // ── Add GeoJSON features to map ───────────────────────────────
-  function addFeatures(map, features, fragment, markers, imagesMap) {
+  function addFeatures(layer, features, fragment, markers, imagesMap) {
     for (const feature of features) {
       if (feature.geometry?.type !== "Point") continue;
       const props = feature.properties || {};
@@ -131,7 +166,7 @@
         continue;
 
       const [lon, lat] = feature.geometry.coordinates;
-      const marker = L.marker([lat, lon]).addTo(map);
+      const marker = L.marker([lat, lon]).addTo(layer);
       const placeKey = props.id || props.name;
       const images = imagesMap[placeKey] || [];
       marker.bindPopup(buildPopupHtml(props, lat, lon, images), {
@@ -263,11 +298,22 @@
 
     if (!entries || entries.length === 0) return;
 
+    // Remove loading indicator
+    const loader = el.querySelector(".osm-map-loading");
+    if (loader) loader.remove();
+
     const map = L.map(el.id);
     el._leaflet_map = map;
     L.tileLayer(tileUrl, { attribution, maxZoom: 18 }).addTo(map);
 
     const markers = [];
+
+    // Use marker clustering if Leaflet.markercluster is loaded
+    const clusterGroup =
+      typeof L.markerClusterGroup === "function"
+        ? L.markerClusterGroup()
+        : null;
+    const markerLayer = clusterGroup || map;
 
     const results = await Promise.allSettled(
       entries.map((entry) =>
@@ -281,13 +327,18 @@
     for (const result of results) {
       if (result.status === "fulfilled") {
         const { fc, fragment } = result.value;
-        addFeatures(map, fc.features || [], fragment, markers, imagesData);
+        addFeatures(markerLayer, fc.features || [], fragment, markers, imagesData);
       } else {
         console.warn("pelican-osm: failed to fetch GeoJSON:", result.reason);
       }
     }
 
     if (markers.length === 0) return;
+
+    // Add cluster group to map
+    if (clusterGroup) {
+      map.addLayer(clusterGroup);
+    }
 
     // Setup fullscreen button
     setupFullscreenButton(el, el);
@@ -297,7 +348,7 @@
       const latlng = markers[0].getLatLng();
       map.setView(latlng, 14);
     } else {
-      const group = L.featureGroup(markers);
+      const group = clusterGroup || L.featureGroup(markers);
       map.fitBounds(group.getBounds().pad(0.15));
     }
   }
@@ -412,6 +463,25 @@
       true,
     ); // Use capture phase to intercept first
 
+    // Touch swipe support for mobile
+    let touchStartX = 0;
+    const SWIPE_THRESHOLD = 50;
+
+    lightbox.addEventListener("touchstart", (e) => {
+      touchStartX = e.changedTouches[0].screenX;
+    }, { passive: true });
+
+    lightbox.addEventListener("touchend", (e) => {
+      if (!lightbox.classList.contains("osm-lightbox--active")) return;
+      const dx = e.changedTouches[0].screenX - touchStartX;
+      if (Math.abs(dx) < SWIPE_THRESHOLD) return;
+      if (dx > 0) {
+        goToImage(currentIdx - 1); // swipe right → previous
+      } else {
+        goToImage(currentIdx + 1); // swipe left → next
+      }
+    });
+
     document.addEventListener(
       "click",
       (e) => {
@@ -507,6 +577,65 @@
     rows.forEach((r) => tbody.appendChild(r));
   }
 
+  // ── Tag filtering for place-list tables ────────────────────────
+  function initTableTagFilter(table, originalRows, countEl) {
+    const wrapper = table.closest(".osm-place-list-wrapper");
+    let activeTag = null;
+    let chipEl = null;
+
+    function updateCount() {
+      if (!countEl) return;
+      const visible = originalRows.filter(
+        (r) => r.style.display !== "none",
+      ).length;
+      countEl.textContent =
+        typeof i18n.placeCount === "function"
+          ? i18n.placeCount(visible)
+          : `${visible} places`;
+    }
+
+    function clearFilter() {
+      activeTag = null;
+      originalRows.forEach((r) => (r.style.display = ""));
+      if (chipEl) {
+        chipEl.remove();
+        chipEl = null;
+      }
+      updateCount();
+    }
+
+    function applyFilter(tag) {
+      if (tag === activeTag) {
+        clearFilter();
+        return;
+      }
+      activeTag = tag;
+      originalRows.forEach((r) => {
+        const badges = Array.from(
+          r.querySelectorAll(".osm-badge--tag"),
+        ).map((b) => b.textContent.trim());
+        r.style.display = badges.includes(tag) ? "" : "none";
+      });
+
+      // Show or update filter chip
+      if (!chipEl) {
+        chipEl = document.createElement("span");
+        chipEl.className = "osm-tag-filter-chip";
+        chipEl.addEventListener("click", clearFilter);
+        countEl.parentElement.insertBefore(chipEl, countEl);
+      }
+      chipEl.textContent = tag + " ✕";
+      updateCount();
+    }
+
+    table.addEventListener("click", (e) => {
+      const badge = e.target.closest(".osm-badge--tag");
+      if (!badge || !table.contains(badge)) return;
+      e.preventDefault();
+      applyFilter(badge.textContent.trim());
+    });
+  }
+
   function initSortableTables() {
     document.querySelectorAll(".osm-place-list").forEach((table) => {
       const tbody = table.querySelector("tbody");
@@ -521,12 +650,35 @@
           sortTable(table, th, colIdx, originalRows),
         );
       });
+
+      // Fill place count label
+      const wrapper = table.closest(".osm-place-list-wrapper");
+      const countEl = wrapper && wrapper.querySelector(".osm-place-list-count");
+      if (countEl) {
+        const n = originalRows.length;
+        countEl.textContent =
+          typeof i18n.placeCount === "function"
+            ? i18n.placeCount(n)
+            : `${n} places`;
+      }
+
+      // Tag filtering
+      initTableTagFilter(table, originalRows, countEl);
+    });
+  }
+
+  function initCaptionToggle() {
+    document.querySelectorAll(".osm-map-caption").forEach((caption) => {
+      caption.addEventListener("click", () => {
+        caption.classList.toggle("osm-map-caption--expanded");
+      });
     });
   }
 
   function initAllMaps() {
     setupPhotoLightbox();
     initSortableTables();
+    initCaptionToggle();
     document.querySelectorAll(".osm-map").forEach(initMap);
   }
 

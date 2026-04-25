@@ -46,6 +46,11 @@ PLUGINS = ["pelican.plugins.osm"]
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 
+<!-- Optional: marker clustering (auto-detected at runtime) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css">
+<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+
 <!-- Plugin assets — auto-copied to output/static/pelican_osm/ on build -->
 <link rel="stylesheet" href="/static/pelican_osm/css/osm-map.css">
 <script src="/static/pelican_osm/js/osm-map.js" defer></script>
@@ -275,6 +280,9 @@ window.OSM_I18N = {
   // Map link labels (defaults: "OSM", "Google")
   osmLink:      "OSM",
   googleLink:   "Google",
+
+  // Place count label below tables (receives row count as argument)
+  placeCount:   (n) => `${n} 個地點`,
 
   // Fallback link text for urls entries with no label.
   // Defaults to the URL's hostname (e.g. "example.com").
