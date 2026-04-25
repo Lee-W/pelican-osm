@@ -123,6 +123,21 @@
   to { transform: rotate(360deg); }
 }
 
+/* --------------------------------------------------------------------------
+   Empty / error state
+   -------------------------------------------------------------------------- */
+.osm-map-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9em;
+  color: #888;
+  z-index: 1;
+  pointer-events: none;
+}
+
 .osm-map-block:fullscreen .osm-map {
   height: 100%;
 }
@@ -381,6 +396,92 @@
   z-index: 10001;
   pointer-events: auto;
 }
+
+/* --------------------------------------------------------------------------
+   Reset view button
+   -------------------------------------------------------------------------- */
+.osm-reset-btn {
+  position: absolute;
+  top: 10px;
+  right: 56px; /* next to fullscreen button */
+  z-index: 1000;
+  width: var(--osm-fs-btn-size);
+  height: var(--osm-fs-btn-size);
+  padding: 0;
+  border: none;
+  background: var(--osm-fs-btn-bg);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 20px;
+  color: var(--osm-fs-btn-color);
+  box-shadow: var(--osm-fs-btn-shadow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  line-height: 1;
+}
+
+.osm-reset-btn:hover {
+  background: var(--osm-fs-btn-hover-bg);
+  box-shadow: var(--osm-fs-btn-hover-shadow);
+}
+
+.osm-reset-btn:active {
+  transform: scale(0.95);
+}
+
+/* Reset button in fullscreen */
+.osm-map-block--fullscreen .osm-reset-btn,
+.osm-map-block:fullscreen .osm-reset-btn,
+.osm-map-block:-webkit-full-screen .osm-reset-btn,
+.osm-map-block:-moz-full-screen .osm-reset-btn {
+  position: fixed;
+  top: 10px;
+  right: 56px;
+  z-index: 10001;
+  pointer-events: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Map tag filter bar
+   -------------------------------------------------------------------------- */
+.osm-map-tag-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+  padding: 0.4em 0.8em;
+  background: var(--osm-caption-bg);
+  border-top: var(--osm-caption-border);
+}
+
+.osm-map-tag-chip {
+  display: inline-block;
+  font-size: var(--osm-badge-font-size);
+  padding: var(--osm-badge-padding);
+  border-radius: var(--osm-badge-radius);
+  border: 1px solid transparent;
+  background: var(--osm-badge-tag-bg, #e8e8e8);
+  color: var(--osm-badge-tag-color, #444);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+
+.osm-map-tag-chip:hover {
+  opacity: 0.7;
+}
+
+.osm-map-tag-chip--active {
+  background: var(--osm-links-anchor-color, #c0392b);
+  color: #fff;
+  opacity: 1;
+}
+
+.osm-map-tag-chip--active:hover {
+  opacity: 0.85;
+}
+
 
 /* --------------------------------------------------------------------------
    Caption bar
@@ -702,18 +803,31 @@
    -------------------------------------------------------------------------- */
 .osm-popup-gallery {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
   gap: var(--osm-gallery-gap);
   margin-top: var(--osm-gallery-gap);
   padding-top: var(--osm-gallery-gap);
+  padding-bottom: 4px;
   border-top: 1px solid #e0e0e0;
+  scrollbar-width: thin;
+}
+
+.osm-popup-gallery::-webkit-scrollbar {
+  height: 4px;
+}
+
+.osm-popup-gallery::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
 }
 
 .osm-popup-photo {
-  max-height: var(--osm-photo-max-height);
-  max-width: 100%;
+  height: var(--osm-photo-max-height);
+  max-width: none;
+  flex-shrink: 0;
   border-radius: var(--osm-photo-border-radius);
-  object-fit: contain;
+  object-fit: cover;
   cursor: pointer;
   transition: transform 0.2s ease;
   border: 1px solid transparent;
@@ -910,13 +1024,15 @@
     color: #fff;
   }
 
-  /* Fullscreen button */
-  .osm-fullscreen-btn {
+  /* Fullscreen & reset buttons */
+  .osm-fullscreen-btn,
+  .osm-reset-btn {
     background: #2a2a2a;
     color: #ddd;
   }
 
-  .osm-fullscreen-btn:hover {
+  .osm-fullscreen-btn:hover,
+  .osm-reset-btn:hover {
     background: #3a3a3a;
   }
 

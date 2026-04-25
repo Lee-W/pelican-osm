@@ -30,6 +30,8 @@
   const BUILTIN_I18N = {
     zh: {
       placeCount: (n) => `${n} 個地點`,
+      loadError: "無法載入地圖資料",
+      noPlaces: "找不到地點",
       fieldLabels: {
         date: "日期",
         category: "分類",
@@ -45,6 +47,8 @@
     },
     ja: {
       placeCount: (n) => `${n} 件`,
+      loadError: "地図データの読み込みに失敗しました",
+      noPlaces: "場所が見つかりません",
       fieldLabels: {},
     },
   };
@@ -66,6 +70,42 @@
     detectedI18n.fieldLabels || {},
     (window.OSM_I18N || {}).fieldLabels,
   );
+
+  // ── Dynamic loader for Leaflet.markercluster ──────────────────
+  const MARKERCLUSTER_CDN = "https://unpkg.com/leaflet.markercluster@1/dist";
+  let _clusterReady = null; // Promise, resolved once loaded (or skipped)
+
+  function loadMarkerCluster() {
+    if (_clusterReady) return _clusterReady;
+
+    // Already loaded (user added script tags manually)
+    if (typeof L.markerClusterGroup === "function") {
+      _clusterReady = Promise.resolve(true);
+      return _clusterReady;
+    }
+
+    _clusterReady = new Promise((resolve) => {
+      // Load CSS
+      for (const file of ["MarkerCluster.css", "MarkerCluster.Default.css"]) {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = `${MARKERCLUSTER_CDN}/${file}`;
+        document.head.appendChild(link);
+      }
+
+      // Load JS
+      const script = document.createElement("script");
+      script.src = `${MARKERCLUSTER_CDN}/leaflet.markercluster.js`;
+      script.onload = () => resolve(true);
+      script.onerror = () => {
+        console.warn("pelican-osm: failed to load markercluster from CDN");
+        resolve(false);
+      };
+      document.head.appendChild(script);
+    });
+
+    return _clusterReady;
+  }
 
   // ── Field label resolution ────────────────────────────────────
   const HIDDEN_FIELDS = new Set([
@@ -168,6 +208,9 @@
       const [lon, lat] = feature.geometry.coordinates;
       const marker = L.marker([lat, lon]).addTo(layer);
       const placeKey = props.id || props.name;
+      marker._osmPlaceId = props.id || null;
+      marker._osmPlaceName = props.name;
+      marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
       const images = imagesMap[placeKey] || [];
       marker.bindPopup(buildPopupHtml(props, lat, lon, images), {
         maxWidth: 280,
@@ -277,6 +320,119 @@
     });
   }
 
+  // ── Reset view button ──────────────────────────────────────────
+  function setupResetButton(mapEl, map, initialView) {
+    const btn = document.createElement("button");
+    btn.className = "osm-reset-btn";
+    btn.setAttribute("title", i18n.resetView || "Reset view");
+    btn.innerHTML = "↺";
+
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (initialView.bounds) {
+        map.fitBounds(initialView.bounds);
+      } else {
+        map.setView(initialView.center, initialView.zoom);
+      }
+    });
+
+    mapEl.parentElement.insertBefore(btn, mapEl.nextSibling);
+  }
+
+  // ── Map tag filter ────────────────────────────────────────────
+  function setupMapTagFilter(mapEl, map, markers, clusterGroup, initialView) {
+    // Collect all unique tags
+    const allTags = new Set();
+    for (const m of markers) {
+      for (const t of m._osmTags) allTags.add(t);
+    }
+    if (allTags.size === 0) return;
+
+    const mapBlock = mapEl.closest(".osm-map-block");
+    if (!mapBlock) return;
+
+    // Create filter bar
+    const bar = document.createElement("div");
+    bar.className = "osm-map-tag-bar";
+
+    let activeTag = null;
+
+    function clearFilter() {
+      activeTag = null;
+      bar.querySelectorAll(".osm-map-tag-chip").forEach((c) => {
+        c.classList.remove("osm-map-tag-chip--active");
+        c.textContent = c.dataset.tag;
+      });
+      if (clusterGroup) {
+        clusterGroup.clearLayers();
+        markers.forEach((m) => clusterGroup.addLayer(m));
+      } else {
+        markers.forEach((m) => m.addTo(map));
+      }
+      refitBounds(markers);
+    }
+
+    function refitBounds(visible) {
+      if (visible.length === 0) return;
+      if (visible.length === 1) {
+        map.setView(visible[0].getLatLng(), 14);
+      } else {
+        const group = L.featureGroup(visible);
+        map.fitBounds(group.getBounds().pad(0.15));
+      }
+    }
+
+    function applyFilter(tag) {
+      if (tag === activeTag) {
+        clearFilter();
+        return;
+      }
+      activeTag = tag;
+      bar.querySelectorAll(".osm-map-tag-chip").forEach((c) => {
+        const isActive = c.dataset.tag === tag;
+        c.classList.toggle("osm-map-tag-chip--active", isActive);
+        c.textContent = isActive ? tag + " ✕" : c.dataset.tag;
+      });
+
+      const visible = [];
+      if (clusterGroup) {
+        clusterGroup.clearLayers();
+        markers.forEach((m) => {
+          if (m._osmTags.includes(tag)) {
+            clusterGroup.addLayer(m);
+            visible.push(m);
+          }
+        });
+      } else {
+        markers.forEach((m) => {
+          if (m._osmTags.includes(tag)) {
+            m.addTo(map);
+            visible.push(m);
+          } else {
+            m.remove();
+          }
+        });
+      }
+      refitBounds(visible);
+    }
+
+    for (const tag of allTags) {
+      const chip = document.createElement("button");
+      chip.className = "osm-map-tag-chip";
+      chip.dataset.tag = tag;
+      chip.textContent = tag;
+      chip.addEventListener("click", (e) => {
+        e.preventDefault();
+        applyFilter(tag);
+      });
+      bar.appendChild(chip);
+    }
+
+    // Insert bar after the map element, before caption
+    mapBlock.insertBefore(bar, mapEl.nextSibling);
+  }
+
   // ── Map init ──────────────────────────────────────────────────
   async function initMap(el) {
     const rawEntries = el.getAttribute("data-geojson");
@@ -297,6 +453,9 @@
     }
 
     if (!entries || entries.length === 0) return;
+
+    // Load markercluster before initializing the map
+    await loadMarkerCluster();
 
     // Remove loading indicator
     const loader = el.querySelector(".osm-map-loading");
@@ -324,16 +483,27 @@
       ),
     );
 
+    let fetchErrors = 0;
     for (const result of results) {
       if (result.status === "fulfilled") {
         const { fc, fragment } = result.value;
         addFeatures(markerLayer, fc.features || [], fragment, markers, imagesData);
       } else {
+        fetchErrors++;
         console.warn("pelican-osm: failed to fetch GeoJSON:", result.reason);
       }
     }
 
-    if (markers.length === 0) return;
+    if (markers.length === 0) {
+      const msg = document.createElement("div");
+      msg.className = "osm-map-empty";
+      msg.textContent =
+        fetchErrors === entries.length
+          ? (i18n.loadError || "Failed to load map data")
+          : (i18n.noPlaces || "No places found");
+      el.appendChild(msg);
+      return;
+    }
 
     // Add cluster group to map
     if (clusterGroup) {
@@ -343,13 +513,42 @@
     // Setup fullscreen button
     setupFullscreenButton(el, el);
 
-    // Set map view
+    // Set map view and save initial bounds for reset
+    let initialView;
     if (markers.length === 1) {
       const latlng = markers[0].getLatLng();
       map.setView(latlng, 14);
+      initialView = { center: latlng, zoom: 14 };
     } else {
       const group = clusterGroup || L.featureGroup(markers);
-      map.fitBounds(group.getBounds().pad(0.15));
+      const bounds = group.getBounds().pad(0.15);
+      map.fitBounds(bounds);
+      initialView = { bounds };
+    }
+
+    // Reset view button
+    setupResetButton(el, map, initialView);
+
+    // Tag filtering on map
+    setupMapTagFilter(el, map, markers, clusterGroup, initialView);
+
+    // Deep linking: open popup if URL hash matches a place id or name
+    const hash = decodeURIComponent(window.location.hash.slice(1));
+    if (hash) {
+      const target = markers.find(
+        (m) => m._osmPlaceId === hash || m._osmPlaceName === hash,
+      );
+      if (target) {
+        // If clustered, uncollapse the cluster first
+        if (clusterGroup && clusterGroup.zoomToShowLayer) {
+          clusterGroup.zoomToShowLayer(target, () => {
+            target.openPopup();
+          });
+        } else {
+          map.setView(target.getLatLng(), 16);
+          target.openPopup();
+        }
+      }
     }
   }
 
@@ -679,7 +878,26 @@
     setupPhotoLightbox();
     initSortableTables();
     initCaptionToggle();
-    document.querySelectorAll(".osm-map").forEach(initMap);
+
+    const mapEls = document.querySelectorAll(".osm-map");
+
+    if ("IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              observer.unobserve(entry.target);
+              initMap(entry.target);
+            }
+          }
+        },
+        { rootMargin: "200px" },
+      );
+      mapEls.forEach((el) => observer.observe(el));
+    } else {
+      // Fallback: init all immediately
+      mapEls.forEach(initMap);
+    }
   }
 
   if (document.readyState === "loading") {

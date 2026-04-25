@@ -5,16 +5,23 @@
 ## Features
 
 - `{% place %}` shortcode renders an independent interactive map per shortcode
-- `{% place_list %}` shortcode renders a table of places from one or more YAML specs
+- `{% place_list %}` shortcode renders a sortable table of places with tag filtering and row count
 - YAML files converted to GeoJSON at build time — JS fetches them at runtime
 - Flexible spec syntax: single file, single place via `#id`, entire folder, or comma-separated mix
 - File-level metadata (anime title, tags, country…) applied as defaults to every place in the file
 - Per-place popup with auto-generated OSM and Google Maps links
-- `tags` list rendered as inline badges in the popup
+- `tags` list rendered as clickable badges — click to filter the table by tag
 - `urls` list rendered as labelled links in the popup and list table
 - All extra YAML fields displayed in the popup automatically
+- Horizontal scroll photo gallery in popups with lightbox viewer (swipe on mobile)
+- Optional marker clustering via [Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster) (auto-detected)
+- Lazy map initialization — maps only load when scrolled into view
+- Reset view button (↺) to return to the original map bounds
+- Deep linking — link directly to a place via URL hash (e.g. `page.html#place_id`)
+- Error/empty state messages when data fails to load
+- Auto-detects `<html lang>` for built-in translations (zh, ja), with full override via `window.OSM_I18N`
 - Fully class-based CSS — every visual detail overridable via custom properties
-- i18n via `window.OSM_I18N`
+- Dark mode support
 
 ## How it works
 
@@ -45,11 +52,6 @@ PLUGINS = ["pelican.plugins.osm"]
 ```html
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
-<!-- Optional: marker clustering (auto-detected at runtime) -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css">
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css">
-<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
 
 <!-- Plugin assets — auto-copied to output/static/pelican_osm/ on build -->
 <link rel="stylesheet" href="/static/pelican_osm/css/osm-map.css">
@@ -221,6 +223,29 @@ The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/
 | `OSM_LIST_FIELDS` | `[]` (auto) | Ordered list of field keys to show as columns. When empty, all non-reserved fields found in the data are used. |
 | `OSM_LIST_FIELD_LABELS` | `{}` | Override column header labels, e.g. `{"date": "Visited", "name": "Place"}` |
 
+## Deep linking
+
+Link directly to a specific place by appending its `id` or `name` as a URL hash:
+
+```
+https://example.com/my-post.html#normal_park
+https://example.com/my-post.html#豊島区立南池袋第二公園
+```
+
+The map will pan to the marker and open its popup automatically. When marker clustering is enabled, the cluster is expanded first.
+
+## Tag filtering
+
+Tag badges are clickable in both maps and tables.
+
+**In `{% place_list %}` tables:** Clicking a tag filters the table to show only rows with that tag. A filter chip appears next to the row count — click it (or click the same tag again) to clear the filter.
+
+**In `{% place %}` maps:** A tag bar appears below the map when places have tags. Click a tag to show only markers with that tag; click again to show all. The map automatically re-fits to the visible markers.
+
+## Marker clustering
+
+[Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster) is automatically loaded from CDN at runtime. Nearby markers are grouped into clusters that expand on click/zoom. No extra setup is needed.
+
 ## Customising the CSS
 
 All visual properties are CSS custom properties declared on `:root`. Override in your own stylesheet (loaded after `osm-map.css`):
@@ -272,7 +297,9 @@ All visual properties are CSS custom properties declared on `:root`. Override in
 
 ## i18n
 
-All user-visible strings default to English. Set `window.OSM_I18N` **before** loading `osm-map.js`:
+The plugin auto-detects the page language from `<html lang="...">` and applies built-in translations when available. Currently supported: `zh` (Traditional Chinese), `ja` (Japanese). All other languages fall back to English.
+
+You can override any string by setting `window.OSM_I18N` **before** loading `osm-map.js`. Manual overrides take priority over auto-detected translations.
 
 ```html
 <script>
@@ -283,6 +310,10 @@ window.OSM_I18N = {
 
   // Place count label below tables (receives row count as argument)
   placeCount:   (n) => `${n} 個地點`,
+
+  // Error/empty state messages
+  loadError:    "無法載入地圖資料",
+  noPlaces:     "找不到地點",
 
   // Fallback link text for urls entries with no label.
   // Defaults to the URL's hostname (e.g. "example.com").
@@ -310,6 +341,18 @@ window.OSM_I18N = {
 ```
 
 `fieldLabels` is shallow-merged — only list the keys you want to change.
+
+### Available i18n keys
+
+| Key | Default (en) | Description |
+| --- | --- | --- |
+| `osmLink` | `"OSM"` | OSM link label in popups and tables |
+| `googleLink` | `"Google"` | Google Maps link label |
+| `placeCount` | `(n) => "N places"` | Row count below tables (function) |
+| `loadError` | `"Failed to load map data"` | Shown when all GeoJSON fetches fail |
+| `noPlaces` | `"No places found"` | Shown when no markers match |
+| `urlLinkLabel` | `"Link"` | Fallback text for unlabelled URLs |
+| `fieldLabels` | `{}` | YAML key to display label mapping |
 
 ## License
 
