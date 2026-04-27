@@ -24,6 +24,8 @@ from pelican.plugins.osm.osm import (
     _geojson_url,
     _is_place_yaml,
     _load_yaml_file,
+    _merge_place,
+    _parse_shortcode_args,
     _place_to_feature,
     _process_content,
     _render_place_html,
@@ -219,6 +221,155 @@ class TestLoadYamlFile:
         )
         places = _load_yaml_file(yml)
         assert places[0]["date"] in ("2026-02-22", datetime.date(2026, 2, 22))
+
+    # ── tag append-merge across all 3 formats ─────────────────────────────
+
+    def test_locations_format_tags_unioned_with_per_location(self, tmp_path):
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "tags: [動畫]\n"
+            "locations:\n"
+            "  - name: A\n    lat: 1.0\n    lon: 2.0\n    tags: [已歇業]\n",
+            encoding="utf-8",
+        )
+        places = _load_yaml_file(yml)
+        assert places[0]["tags"] == ["動畫", "已歇業"]
+
+    def test_locations_format_empty_per_location_tags_preserve_file_tags(
+        self, tmp_path
+    ):
+        # Regression: previously `tags: []` overrode file-level tags
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "tags: [動畫]\n"
+            "locations:\n"
+            "  - name: A\n    lat: 1.0\n    lon: 2.0\n    tags: []\n",
+            encoding="utf-8",
+        )
+        places = _load_yaml_file(yml)
+        assert places[0]["tags"] == ["動畫"]
+
+    def test_dict_format_tags_unioned(self, tmp_path):
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "defaults:\n  tags: [coworking]\n"
+            "spot:\n  name: A\n  lat: 1.0\n  lon: 2.0\n  tags: [台北]\n",
+            encoding="utf-8",
+        )
+        places = _load_yaml_file(yml)
+        assert places[0]["tags"] == ["coworking", "台北"]
+
+    def test_bare_list_format_tags_unioned(self, tmp_path):
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "- defaults:\n    tags: [動畫]\n"
+            "- name: A\n  lat: 1.0\n  lon: 2.0\n  tags: [已歇業]\n",
+            encoding="utf-8",
+        )
+        places = _load_yaml_file(yml)
+        assert places[0]["tags"] == ["動畫", "已歇業"]
+
+
+# ---------------------------------------------------------------------------
+# _merge_place
+# ---------------------------------------------------------------------------
+
+
+class TestMergePlace:
+    def test_non_tag_fields_overridden_by_per_place(self):
+        result = _merge_place({"country": "Japan"}, {"country": "Taiwan"})
+        assert result["country"] == "Taiwan"
+
+    def test_per_place_only_fields_kept(self):
+        result = _merge_place({}, {"name": "A"})
+        assert result["name"] == "A"
+
+    def test_file_only_fields_propagate(self):
+        result = _merge_place({"anime": "MyGO"}, {"name": "A"})
+        assert result["anime"] == "MyGO"
+        assert result["name"] == "A"
+
+    def test_tags_unioned_with_file_first(self):
+        result = _merge_place({"tags": ["動畫"]}, {"tags": ["已歇業"]})
+        assert result["tags"] == ["動畫", "已歇業"]
+
+    def test_tag_duplicates_collapsed(self):
+        result = _merge_place({"tags": ["動畫", "電影"]}, {"tags": ["動畫"]})
+        assert result["tags"] == ["動畫", "電影"]
+
+    def test_empty_per_place_tags_preserves_file_tags(self):
+        result = _merge_place({"tags": ["動畫"]}, {"tags": []})
+        assert result["tags"] == ["動畫"]
+
+    def test_no_per_place_tags_preserves_file_tags(self):
+        result = _merge_place({"tags": ["動畫"]}, {})
+        assert result["tags"] == ["動畫"]
+
+    def test_no_file_tags_keeps_per_place_tags(self):
+        result = _merge_place({}, {"tags": ["已歇業"]})
+        assert result["tags"] == ["已歇業"]
+
+    def test_neither_has_tags_no_tags_key(self):
+        result = _merge_place({"country": "Japan"}, {"name": "A"})
+        assert "tags" not in result
+
+
+# ---------------------------------------------------------------------------
+# _parse_shortcode_args
+# ---------------------------------------------------------------------------
+
+
+class TestParseShortcodeArgs:
+    def test_legacy_single_spec(self):
+        positional, kwargs = _parse_shortcode_args("pilgrimage")
+        assert positional == ["pilgrimage"]
+        assert kwargs == {}
+
+    def test_legacy_comma_separated_specs(self):
+        positional, kwargs = _parse_shortcode_args("japan/tamako.yml, taiwan.yml")
+        assert positional == ["japan/tamako.yml", "taiwan.yml"]
+        assert kwargs == {}
+
+    def test_legacy_no_split_on_kwargs_when_no_equals(self):
+        # No `=` means we never invoke shlex; this is the backwards-compat path
+        positional, kwargs = _parse_shortcode_args("a, b , c")
+        assert positional == ["a", "b", "c"]
+        assert kwargs == {}
+
+    def test_kwarg_with_unquoted_value(self):
+        positional, kwargs = _parse_shortcode_args("pilgrimage sort=date:asc")
+        assert positional == ["pilgrimage"]
+        assert kwargs == {"sort": "date:asc"}
+
+    def test_kwarg_with_quoted_comma_value(self):
+        positional, kwargs = _parse_shortcode_args(
+            'pilgrimage group_by="anime,country,city"'
+        )
+        assert positional == ["pilgrimage"]
+        assert kwargs == {"group_by": "anime,country,city"}
+
+    def test_multiple_kwargs(self):
+        positional, kwargs = _parse_shortcode_args(
+            'pilgrimage group_by="anime" aggregate="date:year" sort=date:asc'
+        )
+        assert positional == ["pilgrimage"]
+        assert kwargs == {
+            "group_by": "anime",
+            "aggregate": "date:year",
+            "sort": "date:asc",
+        }
+
+    def test_positional_plus_kwarg(self):
+        positional, kwargs = _parse_shortcode_args(
+            'japan/tamako.yml, taiwan.yml group_by="country"'
+        )
+        assert positional == ["japan/tamako.yml", "taiwan.yml"]
+        assert kwargs == {"group_by": "country"}
+
+    def test_only_kwargs(self):
+        positional, kwargs = _parse_shortcode_args('group_by="anime"')
+        assert positional == []
+        assert kwargs == {"group_by": "anime"}
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +692,13 @@ class TestProcessContent:
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "出町桝形商店街" in result
         assert "鴨川デルタ" in result
+
+    def test_unknown_kwargs_do_not_break_parsing(self, resolver):
+        # Forward-compat: kwargs that the current shortcode doesn't consume
+        # should still parse without breaking the legacy positional spec.
+        content = '{% place japan/tamako.yml future_kwarg="x,y" %}'
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        assert "tamako.geojson" in result
 
 
 # ---------------------------------------------------------------------------

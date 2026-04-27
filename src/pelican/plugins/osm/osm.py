@@ -6,6 +6,7 @@ import datetime
 import json
 import logging
 import re
+import shlex
 import shutil
 from pathlib import Path
 from typing import Any, cast
@@ -43,6 +44,60 @@ def _is_place_yaml(path: Path) -> bool:
     return path.suffix in (".yml", ".yaml") and not path.name.startswith("_")
 
 
+def _merge_place(
+    file_defaults: dict[str, Any], per_place: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge file-level defaults with a per-place dict.
+
+    Most fields use override semantics (per-place wins). The ``tags`` field is
+    a special case: file-level and per-place tags are merged into a deduplicated
+    list preserving order (file tags first). This lets a YAML file declare e.g.
+    ``tags: [動畫]`` once at the top and add per-location status tags like
+    ``["已歇業"]`` without losing the file-level tag.
+    """
+    result = {**file_defaults, **per_place}
+    file_tags = file_defaults.get("tags") or []
+    place_tags = per_place.get("tags") or []
+    if file_tags or place_tags:
+        merged: list[Any] = []
+        seen: set[Any] = set()
+        for tag in (*file_tags, *place_tags):
+            if tag not in seen:
+                merged.append(tag)
+                seen.add(tag)
+        result["tags"] = merged
+    return result
+
+
+def _parse_shortcode_args(raw: str) -> tuple[list[str], dict[str, str]]:
+    """Parse a shortcode argument string into (positional_specs, kwargs).
+
+    Backwards compatible: when no ``=`` appears in ``raw``, falls back to the
+    legacy comma-split behavior so existing shortcodes like
+    ``{% place japan/tamako.yml, taiwan.yml %}`` are unchanged.
+
+    With kwargs, uses shlex so quoted values can contain commas/spaces::
+
+        pilgrimage group_by="anime,country,city" sort=date:asc
+        japan/tamako.yml, taiwan.yml group_by=anime
+    """
+    if "=" not in raw:
+        return ([s.strip() for s in raw.split(",") if s.strip()], {})
+
+    positional: list[str] = []
+    kwargs: dict[str, str] = {}
+    for tok in shlex.split(raw):
+        if "=" in tok:
+            key, _, value = tok.partition("=")
+            kwargs[key.strip()] = value.strip()
+        else:
+            for s in tok.split(","):
+                s = s.strip()
+                if s:
+                    positional.append(s)
+    return positional, kwargs
+
+
 def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
     """Load a YAML file and always return a list of place dicts.
 
@@ -50,7 +105,8 @@ def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
 
     1. **locations-based** (preferred for real use):
        Top-level keys other than ``locations`` become file-level defaults
-       applied to every place. Per-place values always win::
+       applied to every place. Per-place values override file-level values,
+       except for ``tags``, which are unioned (see ``_merge_place``)::
 
            anime: BanG Dream! It's MyGO!!!!!
            tags: [動畫]
@@ -97,9 +153,7 @@ def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
         for item in locations:
             if not isinstance(item, dict):
                 continue
-            # defaults < per-place values
-            entry = {**file_defaults, **item}
-            places.append(entry)
+            places.append(_merge_place(file_defaults, item))
         return places
 
     # ── Format 2: dict-of-places ──────────────────────────────────────────
@@ -113,7 +167,7 @@ def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
             if key == "defaults":
                 continue
             if isinstance(val, dict):
-                entry = {**file_defaults, **val}
+                entry = _merge_place(file_defaults, val)
                 entry.setdefault("id", key)
                 places.append(entry)
         return places
@@ -130,8 +184,7 @@ def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
             ):
                 file_defaults = item["defaults"]
                 continue
-            entry = {**file_defaults, **item}
-            places.append(entry)
+            places.append(_merge_place(file_defaults, item))
         return places
 
     log.warning("Unexpected YAML structure in %s", path)
@@ -624,7 +677,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
 
     def replace(match: re.Match) -> str:
         raw_args = match.group(1)
-        specs = [s.strip() for s in raw_args.split(",") if s.strip()]
+        specs, _kwargs = _parse_shortcode_args(raw_args)
 
         # Each entry: {"url": "...", "fragment": "name_or_id" | None}
         geojson_entries: list[dict] = []
@@ -693,7 +746,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
     )
 
     def replace_list(match: re.Match) -> str:
-        specs = [s.strip() for s in match.group(1).split(",") if s.strip()]
+        specs, _kwargs = _parse_shortcode_args(match.group(1))
         places: list[dict[str, Any]] = []
         for spec in specs:
             loaded = resolver.resolve(spec)
