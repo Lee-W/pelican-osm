@@ -10,6 +10,7 @@ Architecture summary:
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 from pathlib import Path
@@ -19,16 +20,22 @@ import yaml
 
 from pelican.plugins.osm.osm import (
     PlaceResolver,
+    _aggregate_field,
+    _collapse_places,
     _export_geojson,
+    _extract_year,
     _find_schema_for,
     _geojson_url,
     _is_place_yaml,
     _load_yaml_file,
     _merge_place,
+    _parse_aggregate_kwarg,
+    _parse_csv_kwarg,
     _parse_shortcode_args,
     _place_to_feature,
     _process_content,
     _render_place_html,
+    _render_place_list_html,
     _validate_place,
     _validate_yaml_files,
     _yaml_to_geojson,
@@ -373,6 +380,351 @@ class TestParseShortcodeArgs:
 
 
 # ---------------------------------------------------------------------------
+# _parse_csv_kwarg, _parse_aggregate_kwarg
+# ---------------------------------------------------------------------------
+
+
+class TestParseCsvKwarg:
+    def test_single(self):
+        assert _parse_csv_kwarg("anime") == ["anime"]
+
+    def test_multiple(self):
+        assert _parse_csv_kwarg("anime,country,city") == ["anime", "country", "city"]
+
+    def test_strips_whitespace(self):
+        assert _parse_csv_kwarg(" anime , country ") == ["anime", "country"]
+
+    def test_empty(self):
+        assert _parse_csv_kwarg("") == []
+
+    def test_drops_empty_tokens(self):
+        assert _parse_csv_kwarg("a,,b") == ["a", "b"]
+
+
+class TestParseAggregateKwarg:
+    def test_single(self):
+        assert _parse_aggregate_kwarg("date:year") == {"date": "year"}
+
+    def test_multiple(self):
+        assert _parse_aggregate_kwarg("date:year,visits:sum") == {
+            "date": "year",
+            "visits": "sum",
+        }
+
+    def test_empty(self):
+        assert _parse_aggregate_kwarg("") == {}
+
+    def test_token_without_colon_is_ignored(self):
+        # ``oops`` has no ``:`` and is silently dropped; the rest still parses
+        assert _parse_aggregate_kwarg("date:year,oops") == {"date": "year"}
+
+    def test_strips_whitespace(self):
+        assert _parse_aggregate_kwarg(" date : year ") == {"date": "year"}
+
+
+# ---------------------------------------------------------------------------
+# _extract_year
+# ---------------------------------------------------------------------------
+
+
+class TestExtractYear:
+    def test_date_object(self):
+        assert _extract_year(datetime.date(2024, 5, 1)) == 2024
+
+    def test_datetime_object(self):
+        assert _extract_year(datetime.datetime(2024, 5, 1, 10, 30)) == 2024
+
+    def test_iso_string(self):
+        assert _extract_year("2024-05-01") == 2024
+
+    def test_year_only_string(self):
+        assert _extract_year("2024") == 2024
+
+    def test_int_year(self):
+        assert _extract_year(2024) == 2024
+
+    def test_int_out_of_range(self):
+        # A small int isn't a year; we don't want stray counts becoming dates
+        assert _extract_year(42) is None
+
+    def test_none(self):
+        assert _extract_year(None) is None
+
+    def test_empty_string(self):
+        assert _extract_year("") is None
+
+    def test_garbage_string(self):
+        assert _extract_year("foo") is None
+
+
+# ---------------------------------------------------------------------------
+# _aggregate_field
+# ---------------------------------------------------------------------------
+
+
+class TestAggregateField:
+    def test_year_unique_sorted(self):
+        places = [
+            {"date": "2023-01-01"},
+            {"date": "2018-05-05"},
+            {"date": "2023-12-31"},
+        ]
+        assert _aggregate_field("year", "date", places) == "2018, 2023"
+
+    def test_year_with_missing_dates(self):
+        places = [{"date": ""}, {}, {"date": None}]
+        assert _aggregate_field("year", "date", places) == ""
+
+    def test_year_mixed_types(self):
+        places = [
+            {"date": datetime.date(2024, 5, 1)},
+            {"date": "2025-01-01"},
+        ]
+        assert _aggregate_field("year", "date", places) == "2024, 2025"
+
+    def test_unknown_op_returns_empty(self):
+        # Unknown ops are logged and produce empty string rather than raising
+        assert _aggregate_field("nonexistent", "date", [{"date": "2024"}]) == ""
+
+
+# ---------------------------------------------------------------------------
+# _collapse_places
+# ---------------------------------------------------------------------------
+
+
+class TestCollapsePlaces:
+    def test_single_field_collapses_matching_places(self):
+        places = [
+            {"name": "A", "anime": "X"},
+            {"name": "B", "anime": "X"},
+            {"name": "C", "anime": "Y"},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert len(rows) == 2
+        assert rows[0]["anime"] == "X"
+        assert len(rows[0]["_places"]) == 2
+        assert rows[1]["anime"] == "Y"
+        assert len(rows[1]["_places"]) == 1
+
+    def test_multi_field_collapses_by_tuple(self):
+        places = [
+            {"name": "A", "anime": "X", "city": "K"},
+            {"name": "B", "anime": "X", "city": "T"},
+            {"name": "C", "anime": "X", "city": "K"},
+        ]
+        rows = _collapse_places(places, ["anime", "city"], {})
+        assert len(rows) == 2
+        k_row = next(r for r in rows if r["city"] == "K")
+        assert len(k_row["_places"]) == 2
+
+    def test_year_aggregate_collapses_dates(self):
+        places = [
+            {"name": "A", "anime": "X", "date": "2018-05-01"},
+            {"name": "B", "anime": "X", "date": "2023-06-01"},
+            {"name": "C", "anime": "X", "date": "2018-09-01"},
+        ]
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
+        assert rows[0]["date"] == "2018, 2023"
+
+    def test_year_aggregate_with_all_missing_dates_yields_empty(self):
+        places = [
+            {"name": "A", "anime": "X", "date": ""},
+            {"name": "B", "anime": "X"},
+        ]
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
+        assert rows[0]["date"] == ""
+
+    def test_tags_unioned_across_group(self):
+        places = [
+            {"name": "A", "anime": "X", "tags": ["動畫"]},
+            {"name": "B", "anime": "X", "tags": ["已歇業"]},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert rows[0]["tags"] == ["動畫", "已歇業"]
+
+    def test_first_non_empty_wins_for_other_fields(self):
+        places = [
+            {"name": "A", "anime": "X", "category": ""},
+            {"name": "B", "anime": "X", "category": "商店街"},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert rows[0]["category"] == "商店街"
+
+    def test_order_preserves_first_appearance(self):
+        places = [
+            {"name": "A", "anime": "Z"},
+            {"name": "B", "anime": "X"},
+            {"name": "C", "anime": "Z"},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert [r["anime"] for r in rows] == ["Z", "X"]
+
+    def test_aggregate_field_not_overwritten_by_first_non_empty(self):
+        # The aggregate logic should win even if the original place had a
+        # value: the row date should be replaced with the aggregated string.
+        places = [
+            {"name": "A", "anime": "X", "date": "2018-05-01"},
+            {"name": "B", "anime": "X", "date": "2023-06-01"},
+        ]
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
+        assert rows[0]["date"] == "2018, 2023"
+
+
+# ---------------------------------------------------------------------------
+# _render_place_list_html (grouping/aggregation paths)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderPlaceListHtml:
+    def test_empty_returns_comment(self):
+        assert (
+            _render_place_list_html([], [], {})
+            == "<!-- pelican-osm: no places for list -->"
+        )
+
+    def test_flat_path_no_group_header(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "city": "K"},
+            {"name": "B", "lat": 3.0, "lon": 4.0, "city": "T"},
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert "osm-group-header" not in html
+        assert ">A<" in html
+        assert ">B<" in html
+
+    def test_group_by_collapses_rows_in_html(self):
+        places = [
+            {
+                "name": "A1",
+                "lat": 1.0,
+                "lon": 2.0,
+                "anime": "X",
+                "city": "K",
+                "date": "2018-01-01",
+            },
+            {
+                "name": "A2",
+                "lat": 1.0,
+                "lon": 2.0,
+                "anime": "X",
+                "city": "K",
+                "date": "2023-01-01",
+            },
+            {
+                "name": "B1",
+                "lat": 3.0,
+                "lon": 4.0,
+                "anime": "Y",
+                "city": "T",
+                "date": "2024-01-01",
+            },
+        ]
+        html = _render_place_list_html(
+            places,
+            ["anime", "city", "date"],
+            {},
+            group_by=["anime", "city"],
+            aggregate={"date": "year"},
+        )
+        # First place name wins as the row's name cell
+        assert ">A1<" in html
+        # Aggregated years rendered, not raw dates
+        assert "2018, 2023" in html
+        assert "2018-01-01" not in html
+
+    def test_group_summary_at_emits_header_row(self):
+        places = [
+            {"name": "A1", "lat": 1.0, "lon": 2.0, "anime": "X", "city": "K"},
+            {"name": "A2", "lat": 1.0, "lon": 2.0, "anime": "X", "city": "T"},
+            {"name": "B1", "lat": 3.0, "lon": 4.0, "anime": "Y", "city": "Z"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["anime", "city"],
+            {},
+            group_by=["anime", "city"],
+            group_summary_at=["anime"],
+        )
+        assert "osm-group-header" in html
+        assert "colspan=" in html
+        # Both anime values appear as header titles
+        assert "X" in html
+        assert "Y" in html
+
+    def test_group_summary_at_removes_field_from_data_columns(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X", "city": "K"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["anime", "city"],
+            {},
+            group_by=["anime"],
+            group_summary_at=["anime"],
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL)
+        assert thead is not None
+        # Name column + city column = 2 <th>; "anime" column was hoisted
+        assert thead.group().count("<th>") == 2
+
+    def test_group_summary_at_without_group_by_falls_back_to_flat(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X"},
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_summary_at=["anime"],
+        )
+        assert "osm-group-header" not in html
+
+    def test_group_summary_at_not_a_prefix_falls_back_to_flat(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X", "country": "JP"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["anime", "country"],
+            {},
+            group_by=["anime", "country"],
+            group_summary_at=["country"],
+        )
+        assert "osm-group-header" not in html
+
+    def test_group_summary_count_reflects_original_places(self):
+        # Two K-ON places collapse into one row but the header should still
+        # report "2 places" so the user sees the underlying count.
+        places = [
+            {
+                "name": "A1",
+                "lat": 1.0,
+                "lon": 2.0,
+                "anime": "X",
+                "city": "K",
+                "date": "2018-01-01",
+            },
+            {
+                "name": "A2",
+                "lat": 1.0,
+                "lon": 2.0,
+                "anime": "X",
+                "city": "K",
+                "date": "2023-01-01",
+            },
+        ]
+        html = _render_place_list_html(
+            places,
+            ["anime", "city", "date"],
+            {},
+            group_by=["anime", "city"],
+            aggregate={"date": "year"},
+            group_summary_at=["anime"],
+        )
+        assert "2 places" in html
+
+
+# ---------------------------------------------------------------------------
 # _validate_place
 # ---------------------------------------------------------------------------
 
@@ -699,6 +1051,42 @@ class TestProcessContent:
         content = '{% place japan/tamako.yml future_kwarg="x,y" %}'
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "tamako.geojson" in result
+
+    # ── place_list grouping/aggregation kwargs ────────────────────────────
+
+    def test_place_list_group_by_collapses_in_html(self, resolver):
+        # Directory shortcode loads both mygo and tamako; group_by="anime"
+        # collapses each file's places to one row.
+        content = '{% place_list japan group_by="anime" %}'
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        assert "osm-place-list" in result
+        # tbody contains exactly two data rows (no group_summary_at)
+        tbody = re.search(r"<tbody>(.*?)</tbody>", result, re.DOTALL)
+        assert tbody is not None
+        assert tbody.group(1).count("<tr>") == 2
+
+    def test_place_list_group_summary_emits_header(self, resolver):
+        content = '{% place_list japan group_by="anime" group_summary_at="anime" %}'
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        assert "osm-group-header" in result
+        # Both anime titles surface as group headers
+        assert "玉子市場" in result
+        assert "MyGO" in result
+
+    def test_place_list_aggregate_year_renders_year_string(self, tmp_path: Path):
+        # Build a fixture with two same-anime places in different years.
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "show.yml").write_text(
+            "anime: Show\nlocations:\n"
+            "  - name: A\n    lat: 1.0\n    lon: 2.0\n    date: 2018-05-01\n"
+            "  - name: B\n    lat: 1.0\n    lon: 2.0\n    date: 2023-06-01\n",
+            encoding="utf-8",
+        )
+        resolver = PlaceResolver(root)
+        content = '{% place_list show.yml group_by="anime" aggregate="date:year" %}'
+        result = _process_content(content, resolver, DEFAULT_SETTINGS)
+        assert "2018, 2023" in result
 
 
 # ---------------------------------------------------------------------------
