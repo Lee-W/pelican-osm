@@ -35,8 +35,12 @@ DEFAULT_MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 DEFAULT_SCHEMA_FILENAMES = ("_schema.yaml", "_schema.yml", "_schema.json")
 
-# Fields never shown as regular columns in the list table
-_LIST_RESERVED = frozenset(["name", "lat", "lon", "id", "images", "urls", "tags"])
+# Fields never shown as regular columns in the list table.
+# ``_places`` is the synthesised back-reference attached to a row by
+# ``_collapse_places`` so summary rendering can count originals.
+_LIST_RESERVED = frozenset(
+    ["name", "lat", "lon", "id", "images", "urls", "tags", "_places"]
+)
 
 
 def _is_place_yaml(path: Path) -> bool:
@@ -96,6 +100,110 @@ def _parse_shortcode_args(raw: str) -> tuple[list[str], dict[str, str]]:
                 if s:
                     positional.append(s)
     return positional, kwargs
+
+
+def _parse_csv_kwarg(raw: str) -> list[str]:
+    """Parse a comma-separated kwarg value into a list of stripped tokens."""
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def _parse_aggregate_kwarg(raw: str) -> dict[str, str]:
+    """Parse an ``aggregate`` kwarg value into a ``{field: op}`` mapping.
+
+    Format: ``field:op[,field:op]*`` — e.g., ``date:year`` or
+    ``date:year,visits:sum``. Tokens without ``:`` are skipped with no error.
+    """
+    spec: dict[str, str] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part or ":" not in part:
+            continue
+        field, _, op = part.partition(":")
+        spec[field.strip()] = op.strip()
+    return spec
+
+
+def _extract_year(value: Any) -> int | None:
+    """Best-effort extraction of a year integer from a date-like value."""
+    if isinstance(value, datetime.datetime):
+        return value.year
+    if isinstance(value, datetime.date):
+        return value.year
+    if isinstance(value, int):
+        return value if 1000 <= value <= 9999 else None
+    if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
+        return int(value[:4])
+    return None
+
+
+def _aggregate_field(op: str, field: str, places: list[dict[str, Any]]) -> Any:
+    """Aggregate ``field`` across ``places`` according to ``op``.
+
+    Currently supports:
+      * ``year`` — collect unique years from a date-like field, sorted
+        ascending, comma-joined as a string. Returns ``""`` if no place has
+        a usable year.
+    """
+    if op == "year":
+        years: list[int] = []
+        seen: set[int] = set()
+        for p in places:
+            year = _extract_year(p.get(field))
+            if year is None or year in seen:
+                continue
+            seen.add(year)
+            years.append(year)
+        years.sort()
+        return ", ".join(str(y) for y in years)
+    log.warning("pelican-osm: unknown aggregate op %r for field %r", op, field)
+    return ""
+
+
+def _collapse_places(
+    places: list[dict[str, Any]],
+    group_by: list[str],
+    aggregate: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Collapse places into one row per ``group_by`` tuple.
+
+    Row order follows first-appearance of each group key. For non-aggregated
+    fields (other than ``tags``), the first non-empty value wins. ``tags`` are
+    unioned across the whole group, preserving order. Each returned row carries
+    a ``_places`` key with the original places for downstream summary rendering.
+    """
+    rows: dict[tuple, dict[str, Any]] = {}
+    order: list[tuple] = []
+    for place in places:
+        key = tuple(place.get(g, "") for g in group_by)
+        if key not in rows:
+            rows[key] = {**place, "_places": [place]}
+            order.append(key)
+            continue
+
+        existing = rows[key]
+        existing["_places"].append(place)
+        for k, v in place.items():
+            if k == "tags" or k in aggregate:
+                continue
+            if not existing.get(k) and v:
+                existing[k] = v
+
+        merged_tags: list[Any] = list(existing.get("tags") or [])
+        seen_tags = set(merged_tags)
+        for t in place.get("tags") or []:
+            if t not in seen_tags:
+                merged_tags.append(t)
+                seen_tags.add(t)
+        if merged_tags:
+            existing["tags"] = merged_tags
+
+    result: list[dict[str, Any]] = []
+    for key in order:
+        row = rows[key]
+        for field, op in aggregate.items():
+            row[field] = _aggregate_field(op, field, row["_places"])
+        result.append(row)
+    return result
 
 
 def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
@@ -563,27 +671,74 @@ def _render_place_list_html(
     places: list[dict[str, Any]],
     fields: list[str],
     field_labels: dict[str, str],
+    group_by: list[str] | None = None,
+    aggregate: dict[str, str] | None = None,
+    group_summary_at: list[str] | None = None,
 ) -> str:
     """Render an HTML table for a list of places.
 
     ``fields`` controls which columns appear (in order) between the Name and
     Post columns.  If empty, every non-reserved field found in the data is
     used automatically.
+
+    Optional grouping/aggregation:
+      * ``group_by``: collapse places sharing the same tuple of these fields
+        into one row (see ``_collapse_places``).
+      * ``aggregate``: per-field combiners applied while collapsing
+        (e.g., ``{"date": "year"}`` joins unique years).
+      * ``group_summary_at``: a prefix of ``group_by``. When set, those fields
+        are removed from data row columns and instead emitted as synthetic
+        ``<tr class="osm-group-header">`` rows at each group boundary.
     """
     if not places:
         return "<!-- pelican-osm: no places for list -->"
 
+    group_by = group_by or []
+    aggregate = aggregate or {}
+    group_summary_at = group_summary_at or []
+
+    if group_summary_at and not group_by:
+        log.warning("pelican-osm: group_summary_at requires group_by; ignoring summary")
+        group_summary_at = []
+    if group_summary_at and group_by[: len(group_summary_at)] != group_summary_at:
+        log.warning(
+            "pelican-osm: group_summary_at must be a prefix of group_by; "
+            "ignoring summary"
+        )
+        group_summary_at = []
+
+    if group_by:
+        rows = _collapse_places(places, group_by, aggregate)
+    else:
+        rows = [{**p, "_places": [p]} for p in places]
+
+    summary_set = set(group_summary_at)
+
     # Auto-detect columns when none are configured
     if not fields:
         seen: list[str] = []
-        for place in places:
-            for k in place:
+        for row in rows:
+            for k in row:
                 if k not in _LIST_RESERVED and k not in seen:
                     seen.append(k)
         fields = seen
 
-    def col_header(f: str) -> str:
-        return field_labels.get(f, f.replace("_", " ").capitalize())
+    # Fields that live in summary header rows are removed from data row columns
+    data_fields = [f for f in fields if f not in summary_set]
+
+    def col_header(f: str, fallback: str | None = None) -> str:
+        # Precedence: JSON Schema ``title`` (co-located with the field) wins,
+        # then OSM_LIST_FIELD_LABELS, then a provided fallback or auto-derived
+        # from the key. ``title`` is a standard JSON Schema keyword for the
+        # human-readable name of a property, so this is what authors expect.
+        props = field_schema.get(f)
+        if isinstance(props, dict):
+            title = props.get("title")
+            if isinstance(title, str) and title:
+                return title
+        if f in field_labels:
+            return field_labels[f]
+        return fallback if fallback is not None else f.replace("_", " ").capitalize()
 
     def render_tags(tags: Any) -> str:
         if not tags:
@@ -627,34 +782,57 @@ def _render_place_list_html(
             return f'<td data-sort-value="{name}">{name}{map_links}</td>'
         return f'<td data-sort-value="{name}">{name}</td>'
 
-    has_tags = any(place.get("tags") for place in places)
-    has_url = any(place.get("urls") for place in places)
+    has_tags = any(row.get("tags") for row in rows)
+    has_url = any(row.get("urls") for row in rows)
 
     # Header
     headers = ["<th>" + col_header("name", "Name") + "</th>"]
     if has_tags:
-        headers.append("<th>" + field_labels.get("tags", "Tags") + "</th>")
-    headers += [f"<th>{col_header(f)}</th>" for f in fields]
+        headers.append("<th>" + col_header("tags", "Tags") + "</th>")
+    headers += [f"<th>{col_header(f)}</th>" for f in data_fields]
     if has_url:
-        headers.append("<th>" + field_labels.get("urls", "Links") + "</th>")
+        headers.append("<th>" + col_header("urls", "Links") + "</th>")
+    col_count = len(headers)
 
-    # Rows
-    rows: list[str] = []
-    for place in places:
-        cells = [render_name_cell(place)]
+    def render_data_row(row: dict[str, Any]) -> str:
+        cells = [render_name_cell(row)]
         if has_tags:
-            cells.append(f"<td>{render_tags(place.get('tags', []))}</td>")
-        for f in fields:
-            cells.append(f"<td>{place.get(f, '')}</td>")
+            cells.append(f"<td>{render_tags(row.get('tags', []))}</td>")
+        for f in data_fields:
+            cells.append(f"<td>{row.get(f, '')}</td>")
         if has_url:
-            cells.append(f"<td>{render_urls(place.get('urls', []))}</td>")
-        rows.append("<tr>" + "".join(cells) + "</tr>")
+            cells.append(f"<td>{render_urls(row.get('urls', []))}</td>")
+        return "<tr>" + "".join(cells) + "</tr>"
+
+    rendered_rows: list[str] = []
+    if group_summary_at:
+        from itertools import groupby as _groupby
+
+        def _summary_key(row: dict[str, Any]) -> tuple:
+            return tuple(row.get(f, "") for f in group_summary_at)
+
+        for skey, group_iter in _groupby(rows, key=_summary_key):
+            group_rows = list(group_iter)
+            n_places = sum(len(r.get("_places") or [r]) for r in group_rows)
+            title = " · ".join(str(v) for v in skey if v != "")
+            rendered_rows.append(
+                f'<tr class="osm-group-header">'
+                f'<td colspan="{col_count}">'
+                f'<strong class="osm-group-header-title">{title}</strong>'
+                f' <span class="osm-group-count">{n_places} places</span>'
+                f"</td></tr>"
+            )
+            for row in group_rows:
+                rendered_rows.append(render_data_row(row))
+    else:
+        for row in rows:
+            rendered_rows.append(render_data_row(row))
 
     return (
         '<div class="osm-place-list-wrapper">\n'
         '<table class="osm-place-list">\n'
         "<thead><tr>" + "".join(headers) + "</tr></thead>\n"
-        "<tbody>\n" + "\n".join(rows) + "\n</tbody>\n"
+        "<tbody>\n" + "\n".join(rendered_rows) + "\n</tbody>\n"
         "</table>\n"
         '<div class="osm-place-list-count"></div>\n'
         "</div>"
@@ -746,7 +924,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
     )
 
     def replace_list(match: re.Match) -> str:
-        specs, _kwargs = _parse_shortcode_args(match.group(1))
+        specs, kwargs = _parse_shortcode_args(match.group(1))
         places: list[dict[str, Any]] = []
         for spec in specs:
             loaded = resolver.resolve(spec)
@@ -759,7 +937,19 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
 
         field_labels: dict[str, str] = settings.get("OSM_LIST_FIELD_LABELS", {})
         list_fields: list[str] = settings.get("OSM_LIST_FIELDS", [])
-        return _render_place_list_html(places, list_fields, field_labels)
+
+        group_by = _parse_csv_kwarg(kwargs.get("group_by", ""))
+        aggregate = _parse_aggregate_kwarg(kwargs.get("aggregate", ""))
+        group_summary_at = _parse_csv_kwarg(kwargs.get("group_summary_at", ""))
+
+        return _render_place_list_html(
+            places,
+            list_fields,
+            field_labels,
+            group_by=group_by,
+            aggregate=aggregate,
+            group_summary_at=group_summary_at,
+        )
 
     result = cast(str, list_pattern.sub(replace_list, result))
     return result
