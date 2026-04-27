@@ -20,6 +20,7 @@
 - Deep linking — link directly to a place via URL hash (e.g. `page.html#place_id`)
 - Error/empty state messages when data fails to load
 - Auto-detects `<html lang>` for built-in translations (zh, ja), with full override via `window.OSM_I18N`
+- Optional [JSON Schema](https://json-schema.org/) validation for place YAML — drop a `_schema.yaml` next to your files and the plugin enforces it at build time
 - Fully class-based CSS — every visual detail overridable via custom properties
 - Dark mode support
 
@@ -222,12 +223,75 @@ The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/
 | `OSM_LIST_SHORTCODE` | `"place_list"` | Shortcode name |
 | `OSM_LIST_FIELDS` | `[]` (auto) | Ordered list of field keys to show as columns. When empty, all non-reserved fields found in the data are used. |
 | `OSM_LIST_FIELD_LABELS` | `{}` | Override column header labels, e.g. `{"date": "Visited", "name": "Place"}` |
+| `OSM_VALIDATE_SCHEMA_FILENAMES` | `["_schema.yaml", "_schema.yml", "_schema.json"]` | Filenames the validator looks for. Accepts a string or list. |
+| `OSM_VALIDATE_STRICT` | `False` | Raise `RuntimeError` on validation failure instead of just logging warnings. |
+
+## Schema validation
+
+Place YAML can be validated against a [JSON Schema](https://json-schema.org/) at build time. Validation is **opt-in by file presence** — drop a `_schema.yaml` (or `.yml`/`.json`) anywhere under `OSM_PLACES_ROOT` and the plugin will validate every place YAML in the same folder and its subfolders. No schema present → no validation runs.
+
+### 1. Install the optional dependency
+
+```bash
+pip install "pelican-osm[validate]"
+```
+
+If schema files exist but `jsonschema` isn't installed, the plugin logs a warning and skips validation (your build still succeeds).
+
+### 2. Drop a schema next to your YAML files
+
+```text
+content/places/
+├── _schema.yaml              ← applies to every YAML below
+├── restaurant.yaml
+└── pilgrimage/
+    ├── _schema.yaml          ← overrides the parent for this folder
+    ├── yuru-camp.yaml
+    └── tamako-market.yaml
+```
+
+The plugin uses **nearest-ancestor lookup**: a YAML is validated against the closest `_schema.yaml` walking up the directory tree.
+
+### 3. Example schema
+
+```yaml
+# content/places/pilgrimage/_schema.yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: object
+required: [anime, locations]
+properties:
+  anime: {type: string}
+  tags:  {type: array, items: {type: string}}
+  locations:
+    type: array
+    items:
+      type: object
+      required: [name, lat, lon, country, city]
+      additionalProperties: false
+      properties:
+        name:     {type: string, minLength: 1}
+        lat:      {type: number, minimum: -90,  maximum: 90}
+        lon:      {type: number, minimum: -180, maximum: 180}
+        category: {type: string}
+        notes:    {type: string}
+        date:     {type: string, format: date}
+        country:  {type: string}
+        city:     {type: string}
+        tags:     {type: array, items: {type: string}}
+        images:   {type: array, items: {type: string}}
+```
+
+Files starting with `_` (e.g. `_schema.yaml`) are never loaded as place data — they're skipped by both the resolver and the GeoJSON exporter.
+
+Unquoted dates (`date: 2026-02-22`) are normalized to ISO 8601 strings before validation, so schemas can use `type: string, format: date` even though PyYAML parses them as `datetime.date`.
+
+By default, validation failures are logged as warnings. Set `OSM_VALIDATE_STRICT = True` to raise a `RuntimeError` and fail the build instead.
 
 ## Deep linking
 
 Link directly to a specific place by appending its `id` or `name` as a URL hash:
 
-```
+```text
 https://example.com/my-post.html#normal_park
 https://example.com/my-post.html#豊島区立南池袋第二公園
 ```

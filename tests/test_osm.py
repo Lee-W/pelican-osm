@@ -20,12 +20,15 @@ import yaml
 from pelican.plugins.osm.osm import (
     PlaceResolver,
     _export_geojson,
+    _find_schema_for,
     _geojson_url,
+    _is_place_yaml,
     _load_yaml_file,
     _place_to_feature,
     _process_content,
     _render_place_html,
     _validate_place,
+    _validate_yaml_files,
     _yaml_to_geojson,
 )
 
@@ -702,3 +705,242 @@ class TestExportGeojson:
         # japan/mygo.yaml → static/places/japan/mygo.geojson (not .yaml)
         assert (output / "static" / "places" / "japan" / "mygo.geojson").exists()
         assert not (output / "static" / "places" / "japan" / "mygo.yaml").exists()
+
+
+# ---------------------------------------------------------------------------
+# Schema validation
+# ---------------------------------------------------------------------------
+
+
+jsonschema = pytest.importorskip("jsonschema")
+
+
+PLACE_SCHEMA = {
+    "type": "object",
+    "required": ["anime", "locations"],
+    "properties": {
+        "anime": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "locations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "lat", "lon"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "lat": {"type": "number", "minimum": -90, "maximum": 90},
+                    "lon": {"type": "number", "minimum": -180, "maximum": 180},
+                    "date": {"type": "string", "format": "date"},
+                },
+            },
+        },
+    },
+}
+
+
+class TestIsPlaceYaml:
+    def test_regular_yaml(self, tmp_path):
+        assert _is_place_yaml(tmp_path / "foo.yaml") is True
+        assert _is_place_yaml(tmp_path / "foo.yml") is True
+
+    def test_underscore_prefix_excluded(self, tmp_path):
+        assert _is_place_yaml(tmp_path / "_schema.yaml") is False
+        assert _is_place_yaml(tmp_path / "_private.yml") is False
+
+    def test_non_yaml_excluded(self, tmp_path):
+        assert _is_place_yaml(tmp_path / "foo.json") is False
+        assert _is_place_yaml(tmp_path / "foo.txt") is False
+
+
+class TestFindSchemaFor:
+    def test_sibling_schema_found(self, tmp_path):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_schema.yaml").write_text("type: object\n")
+        yaml_file = root / "foo.yaml"
+        yaml_file.write_text("name: A\n")
+
+        result = _find_schema_for(yaml_file, root, ["_schema.yaml"])
+        assert result == (root / "_schema.yaml").resolve()
+
+    def test_ancestor_schema_found(self, tmp_path):
+        root = tmp_path / "places"
+        sub = root / "japan"
+        sub.mkdir(parents=True)
+        (root / "_schema.yaml").write_text("type: object\n")
+        yaml_file = sub / "tokyo.yaml"
+        yaml_file.write_text("name: A\n")
+
+        result = _find_schema_for(yaml_file, root, ["_schema.yaml"])
+        assert result == (root / "_schema.yaml").resolve()
+
+    def test_nearest_ancestor_wins(self, tmp_path):
+        root = tmp_path / "places"
+        sub = root / "japan"
+        sub.mkdir(parents=True)
+        (root / "_schema.yaml").write_text("type: object\n")
+        (sub / "_schema.yaml").write_text("type: object\n")
+        yaml_file = sub / "tokyo.yaml"
+
+        result = _find_schema_for(yaml_file, root, ["_schema.yaml"])
+        assert result == (sub / "_schema.yaml").resolve()
+
+    def test_no_schema_returns_none(self, tmp_path):
+        root = tmp_path / "places"
+        root.mkdir()
+        yaml_file = root / "foo.yaml"
+        yaml_file.write_text("name: A\n")
+
+        assert _find_schema_for(yaml_file, root, ["_schema.yaml"]) is None
+
+    def test_multiple_filenames_first_match_wins(self, tmp_path):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_schema.json").write_text('{"type": "object"}\n')
+        yaml_file = root / "foo.yaml"
+
+        result = _find_schema_for(
+            yaml_file, root, ["_schema.yaml", "_schema.yml", "_schema.json"]
+        )
+        assert result == (root / "_schema.json").resolve()
+
+
+class TestValidateYamlFiles:
+    @pytest.fixture()
+    def schema_root(self, tmp_path):
+        root = tmp_path / "places"
+        sub = root / "pilgrimage"
+        sub.mkdir(parents=True)
+        (sub / "_schema.yaml").write_text(yaml.dump(PLACE_SCHEMA), encoding="utf-8")
+        return root
+
+    def test_no_schema_no_validation(self, places_root, caplog):
+        # places_root fixture has no schema files
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(places_root, {})
+        assert not any("schema validation" in r.message for r in caplog.records)
+
+    def test_valid_file_no_errors(self, schema_root, caplog):
+        sub = schema_root / "pilgrimage"
+        (sub / "valid.yaml").write_text(
+            yaml.dump(
+                {
+                    "anime": "Test",
+                    "tags": ["動畫"],
+                    "locations": [
+                        {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2026-01-01"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(schema_root, {})
+
+        assert not any("schema validation" in r.message for r in caplog.records)
+
+    def test_invalid_file_logs_warning(self, schema_root, caplog):
+        sub = schema_root / "pilgrimage"
+        (sub / "invalid.yaml").write_text(
+            yaml.dump(
+                {
+                    "anime": "Test",
+                    "locations": [
+                        # missing required `name`
+                        {"lat": 1.0, "lon": 2.0},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(schema_root, {})
+
+        assert any("schema validation" in r.message for r in caplog.records)
+
+    def test_missing_required_top_level_key(self, schema_root, caplog):
+        sub = schema_root / "pilgrimage"
+        (sub / "noanime.yaml").write_text(
+            yaml.dump({"locations": [{"name": "A", "lat": 1.0, "lon": 2.0}]}),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(schema_root, {})
+
+        assert any("anime" in r.message for r in caplog.records)
+
+    def test_unquoted_date_does_not_break_validation(self, schema_root, caplog):
+        # PyYAML parses `2026-01-01` as datetime.date — coercion should normalize it
+        sub = schema_root / "pilgrimage"
+        (sub / "datey.yaml").write_text(
+            "anime: Test\n"
+            "locations:\n"
+            "  - name: A\n"
+            "    lat: 1.0\n"
+            "    lon: 2.0\n"
+            "    date: 2026-01-01\n",
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(schema_root, {})
+
+        assert not any("schema validation" in r.message for r in caplog.records)
+
+    def test_strict_mode_raises(self, schema_root):
+        sub = schema_root / "pilgrimage"
+        (sub / "bad.yaml").write_text(
+            yaml.dump({"anime": "T", "locations": [{"lat": 1.0, "lon": 2.0}]}),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(RuntimeError, match="schema validation error"):
+            _validate_yaml_files(schema_root, {"OSM_VALIDATE_STRICT": True})
+
+    def test_schema_file_not_loaded_as_place(self, schema_root):
+        sub = schema_root / "pilgrimage"
+        (sub / "valid.yaml").write_text(
+            yaml.dump(
+                {
+                    "anime": "Test",
+                    "locations": [{"name": "A", "lat": 1.0, "lon": 2.0}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        resolver = PlaceResolver(schema_root)
+        paths = resolver.resolve_to_paths(".")
+        assert all(not p.name.startswith("_") for p in paths)
+        assert sub / "_schema.yaml" not in paths
+
+    def test_custom_schema_filename(self, tmp_path, caplog):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "schema.yaml").write_text(yaml.dump(PLACE_SCHEMA), encoding="utf-8")
+        (root / "bad.yaml").write_text(
+            yaml.dump({"locations": [{"lat": 1.0, "lon": 2.0}]}),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(root, {"OSM_VALIDATE_SCHEMA_FILENAMES": "schema.yaml"})
+
+        assert any("schema validation" in r.message for r in caplog.records)
+
+    def test_invalid_schema_logs_error(self, tmp_path, caplog):
+        root = tmp_path / "places"
+        root.mkdir()
+        # `type` must be a string or list of strings — number is invalid
+        (root / "_schema.yaml").write_text(yaml.dump({"type": 123}), encoding="utf-8")
+        (root / "foo.yaml").write_text(
+            yaml.dump({"name": "A", "lat": 1.0, "lon": 2.0}),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("ERROR"):
+            _validate_yaml_files(root, {})
+
+        assert any("invalid schema" in r.message for r in caplog.records)
