@@ -16,6 +16,14 @@ from pelican.contents import Article, Page
 
 from pelican import signals
 
+try:
+    import jsonschema
+
+    _HAS_JSONSCHEMA = True
+except ImportError:
+    jsonschema = None  # type: ignore[assignment]
+    _HAS_JSONSCHEMA = False
+
 log = logging.getLogger(__name__)
 
 DEFAULT_SHORTCODE = "place"
@@ -24,9 +32,15 @@ DEFAULT_PLACES_ROOT = "places"  # relative to Pelican's PATH (content dir)
 DEFAULT_MAP_HEIGHT = "400px"
 DEFAULT_MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+DEFAULT_SCHEMA_FILENAMES = ("_schema.yaml", "_schema.yml", "_schema.json")
 
 # Fields never shown as regular columns in the list table
 _LIST_RESERVED = frozenset(["name", "lat", "lon", "id", "images", "urls", "tags"])
+
+
+def _is_place_yaml(path: Path) -> bool:
+    """True if ``path`` is a place YAML (not a schema/private underscore file)."""
+    return path.suffix in (".yml", ".yaml") and not path.name.startswith("_")
 
 
 def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
@@ -135,6 +149,129 @@ def _validate_place(place: dict[str, Any], source: str) -> bool:
     return True
 
 
+def _schema_filenames(settings: dict) -> list[str]:
+    val = settings.get("OSM_VALIDATE_SCHEMA_FILENAMES")
+    if val is None:
+        return list(DEFAULT_SCHEMA_FILENAMES)
+    if isinstance(val, str):
+        return [val]
+    return list(val)
+
+
+def _find_schema_for(yaml_path: Path, root: Path, names: list[str]) -> Path | None:
+    """Walk up from ``yaml_path``'s directory to ``root``, return first matching schema.
+
+    Returns ``None`` if no schema is found at any ancestor up to and including ``root``.
+    """
+    try:
+        root_resolved = root.resolve()
+        current = yaml_path.parent.resolve()
+    except OSError:
+        return None
+    while True:
+        for name in names:
+            candidate = current / name
+            if candidate.is_file():
+                return candidate
+        if current == root_resolved:
+            return None
+        parent = current.parent
+        if parent == current:
+            return None
+        current = parent
+
+
+def _coerce_for_validation(value: Any) -> Any:
+    """Recursively coerce non-JSON types to JSON-friendly equivalents.
+
+    PyYAML parses unquoted dates as ``datetime.date``; JSON Schema validates JSON,
+    so we normalize dates/datetimes to ISO 8601 strings. Schemas can then use
+    ``type: string`` with ``format: date``.
+    """
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _coerce_for_validation(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_coerce_for_validation(v) for v in value]
+    return value
+
+
+def _validate_yaml_files(root: Path, settings: dict) -> None:
+    """Validate every place YAML under ``root`` against any nearest-ancestor schema.
+
+    Validation is presence-driven: files with no ancestor schema are skipped.
+    Errors are logged. When ``OSM_VALIDATE_STRICT`` is true, a ``RuntimeError``
+    is raised after the full sweep so authors see all problems at once.
+    """
+    schema_names = _schema_filenames(settings)
+    strict = bool(settings.get("OSM_VALIDATE_STRICT", False))
+
+    pairs: list[tuple[Path, Path]] = []
+    for yaml_path in root.rglob("*"):
+        if not _is_place_yaml(yaml_path):
+            continue
+        schema_path = _find_schema_for(yaml_path, root, schema_names)
+        if schema_path is not None:
+            pairs.append((yaml_path, schema_path))
+
+    if not pairs:
+        return
+
+    if not _HAS_JSONSCHEMA:
+        log.warning(
+            "pelican-osm: schema files found but `jsonschema` is not installed; "
+            "skipping validation. Install with `pip install pelican-osm[validate]`."
+        )
+        return
+
+    schema_cache: dict[Path, Any] = {}
+    errors: list[str] = []
+
+    for yaml_path, schema_path in pairs:
+        if schema_path not in schema_cache:
+            try:
+                with open(schema_path, encoding="utf-8") as f:
+                    schema_cache[schema_path] = yaml.safe_load(f)
+            except (OSError, yaml.YAMLError) as e:
+                log.error("pelican-osm: cannot load schema %s: %s", schema_path, e)
+                schema_cache[schema_path] = None
+        schema = schema_cache[schema_path]
+        if schema is None:
+            continue
+
+        try:
+            with open(yaml_path, encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError) as e:
+            log.error("pelican-osm: cannot load %s: %s", yaml_path, e)
+            continue
+        if data is None:
+            continue
+
+        try:
+            jsonschema.validate(
+                _coerce_for_validation(data),
+                schema,
+                format_checker=jsonschema.FormatChecker(),
+            )
+        except jsonschema.exceptions.SchemaError as e:
+            msg = f"invalid schema {schema_path}: {e.message}"
+            log.error("pelican-osm: %s", msg)
+            errors.append(msg)
+        except jsonschema.exceptions.ValidationError as e:
+            path_str = "/".join(str(p) for p in e.absolute_path) or "<root>"
+            msg = f"{yaml_path}: {e.message} (at {path_str})"
+            log.warning("pelican-osm schema validation: %s", msg)
+            errors.append(msg)
+
+    if errors and strict:
+        raise RuntimeError(
+            f"pelican-osm: {len(errors)} schema validation error(s); "
+            "see logs for details."
+        )
+
+
 class PlaceResolver:
     """Resolves shortcode arguments to lists of place dicts."""
 
@@ -172,7 +309,7 @@ class PlaceResolver:
         return []
 
     def _list_dir(self, directory: Path) -> list[Path]:
-        return sorted(f for f in directory.rglob("*") if f.suffix in (".yml", ".yaml"))
+        return sorted(f for f in directory.rglob("*") if _is_place_yaml(f))
 
     def resolve(self, spec: str) -> list[dict[str, Any]]:
         """Resolve a spec to a list of place dicts (loads YAML files).
@@ -441,7 +578,7 @@ def _render_place_list_html(
     has_url = any(place.get("urls") for place in places)
 
     # Header
-    headers = ["<th>" + field_labels.get("name", "Name") + "</th>"]
+    headers = ["<th>" + col_header("name", "Name") + "</th>"]
     if has_tags:
         headers.append("<th>" + field_labels.get("tags", "Tags") + "</th>")
     headers += [f"<th>{col_header(f)}</th>" for f in fields]
@@ -608,6 +745,9 @@ def _init_resolver(pelican_obj) -> None:
     log.warning("pelican-osm: content_path=%s", content_path)
     log.warning("pelican-osm: places root=%s exists=%s", root, root.exists())
 
+    if root.exists():
+        _validate_yaml_files(root, _settings)
+
 
 def _process_article(content) -> None:
     if not isinstance(content, (Article, Page)):
@@ -767,7 +907,7 @@ def _export_geojson(pelican_obj) -> None:
     if not root.exists():
         return
 
-    yaml_files = sorted(f for f in root.rglob("*") if f.suffix in (".yml", ".yaml"))
+    yaml_files = sorted(f for f in root.rglob("*") if _is_place_yaml(f))
 
     for yaml_path in yaml_files:
         rel = yaml_path.relative_to(root)
