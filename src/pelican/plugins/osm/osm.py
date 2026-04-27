@@ -34,6 +34,10 @@ DEFAULT_MAP_HEIGHT = "400px"
 DEFAULT_MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
 DEFAULT_MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 DEFAULT_SCHEMA_FILENAMES = ("_schema.yaml", "_schema.yml", "_schema.json")
+# Template for the count line under each group_summary_at header. ``{n}`` is
+# replaced with the number of original places in the group. Override via
+# ``OSM_LIST_GROUP_COUNT_TEMPLATE`` for translation; set to ``""`` to suppress.
+DEFAULT_GROUP_COUNT_TEMPLATE = "{n} places"
 
 # Fields never shown as regular columns in the list table.
 # ``_places`` is the synthesised back-reference attached to a row by
@@ -674,6 +678,7 @@ def _render_place_list_html(
     group_by: list[str] | None = None,
     aggregate: dict[str, str] | None = None,
     group_summary_at: list[str] | None = None,
+    group_count_template: str = DEFAULT_GROUP_COUNT_TEMPLATE,
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -689,6 +694,9 @@ def _render_place_list_html(
       * ``group_summary_at``: a prefix of ``group_by``. When set, those fields
         are removed from data row columns and instead emitted as synthetic
         ``<tr class="osm-group-header">`` rows at each group boundary.
+      * ``group_count_template``: format string used for the count line below
+        each header. ``{n}`` is the number of underlying places. Set to ``""``
+        to omit the count entirely.
     """
     if not places:
         return "<!-- pelican-osm: no places for list -->"
@@ -815,11 +823,15 @@ def _render_place_list_html(
             group_rows = list(group_iter)
             n_places = sum(len(r.get("_places") or [r]) for r in group_rows)
             title = " · ".join(str(v) for v in skey if v != "")
+            count_html = ""
+            if group_count_template:
+                count_text = group_count_template.format(n=n_places)
+                count_html = f'<span class="osm-group-count">{count_text}</span>'
             rendered_rows.append(
                 f'<tr class="osm-group-header">'
                 f'<td colspan="{col_count}">'
                 f'<strong class="osm-group-header-title">{title}</strong>'
-                f' <span class="osm-group-count">{n_places} places</span>'
+                f"{count_html}"
                 f"</td></tr>"
             )
             for row in group_rows:
@@ -941,6 +953,9 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
         group_by = _parse_csv_kwarg(kwargs.get("group_by", ""))
         aggregate = _parse_aggregate_kwarg(kwargs.get("aggregate", ""))
         group_summary_at = _parse_csv_kwarg(kwargs.get("group_summary_at", ""))
+        group_count_template = settings.get(
+            "OSM_LIST_GROUP_COUNT_TEMPLATE", DEFAULT_GROUP_COUNT_TEMPLATE
+        )
 
         return _render_place_list_html(
             places,
@@ -949,6 +964,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
             group_by=group_by,
             aggregate=aggregate,
             group_summary_at=group_summary_at,
+            group_count_template=group_count_template,
         )
 
     result = cast(str, list_pattern.sub(replace_list, result))

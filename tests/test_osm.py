@@ -692,6 +692,39 @@ class TestRenderPlaceListHtml:
         )
         assert "osm-group-header" not in html
 
+    def test_group_count_template_supports_i18n(self):
+        # Custom template lets sites render the count in their own language
+        # without patching the plugin source.
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X"},
+            {"name": "B", "lat": 1.0, "lon": 2.0, "anime": "X"},
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_by=["anime"],
+            group_summary_at=["anime"],
+            group_count_template="{n} 個地點",
+        )
+        assert "2 個地點" in html
+        assert "places" not in html
+
+    def test_group_count_template_empty_omits_count(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X"},
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_by=["anime"],
+            group_summary_at=["anime"],
+            group_count_template="",
+        )
+        assert "osm-group-header" in html
+        assert "osm-group-count" not in html
+
     def test_group_summary_count_reflects_original_places(self):
         # Two K-ON places collapse into one row but the header should still
         # report "2 places" so the user sees the underlying count.
@@ -1072,6 +1105,16 @@ class TestProcessContent:
         # Both anime titles surface as group headers
         assert "玉子市場" in result
         assert "MyGO" in result
+
+    def test_place_list_group_count_template_setting(self, resolver):
+        settings = {
+            **DEFAULT_SETTINGS,
+            "OSM_LIST_GROUP_COUNT_TEMPLATE": "{n} 個地點",
+        }
+        content = '{% place_list japan group_by="anime" group_summary_at="anime" %}'
+        result = _process_content(content, resolver, settings)
+        assert "個地點" in result
+        assert ">1 places<" not in result
 
     def test_place_list_aggregate_year_renders_year_string(self, tmp_path: Path):
         # Build a fixture with two same-anime places in different years.
