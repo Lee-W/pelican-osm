@@ -71,6 +71,12 @@
   --osm-fs-btn-hover-bg: #f0f0f0;
   --osm-fs-btn-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   --osm-fs-btn-hover-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+
+  /* Place list — group_summary_at header rows */
+  --osm-group-header-bg: #e8f0fe;
+  --osm-group-header-color: #1a3a6c;
+  --osm-group-header-border-color: #cdd9ee;
+  --osm-group-count-color: #6a7a92;
 }
 
 /* --------------------------------------------------------------------------
@@ -759,6 +765,48 @@
   color: #bbb;
 }
 
+/* --------------------------------------------------------------------------
+   Place list — group_summary_at header rows
+   Inserted between data rows when group_summary_at is set. The <td> spans
+   the whole row so the title reads as a section heading rather than a row.
+   -------------------------------------------------------------------------- */
+.osm-place-list .osm-group-header td {
+  background: var(--osm-group-header-bg);
+  color: var(--osm-group-header-color);
+  border-bottom: 2px solid var(--osm-group-header-border-color);
+  padding: 0.6em 0.8em;
+}
+
+/* Suppress the body-row hover so the heading colour stays stable */
+.osm-place-list tbody tr.osm-group-header:hover td {
+  background: var(--osm-group-header-bg);
+}
+
+/* The header td would otherwise inherit the sticky-first-column rules; the
+   row already spans the full table width so the right-edge shadow is wrong. */
+.osm-place-list .osm-group-header td:first-child {
+  position: static;
+  box-shadow: none;
+  background: var(--osm-group-header-bg);
+}
+.osm-place-list tbody tr.osm-group-header:hover td:first-child {
+  background: var(--osm-group-header-bg);
+}
+
+.osm-group-header-title {
+  font-weight: 700;
+  font-size: 1.05em;
+}
+
+/* Force the count onto its own line below the title */
+.osm-group-count {
+  display: block;
+  margin-top: 0.15em;
+  color: var(--osm-group-count-color);
+  font-size: 0.85em;
+  font-weight: normal;
+}
+
 /* Sortable column headers */
 .osm-place-list th[data-sortable] {
   cursor: pointer;
@@ -975,6 +1023,11 @@
 
     --osm-table-bg: #1e1e1e;
     --osm-sort-hover-bg: #333;
+
+    --osm-group-header-bg: #2a3a52;
+    --osm-group-header-color: #e8f0fe;
+    --osm-group-header-border-color: #3d5275;
+    --osm-group-count-color: #9aa8c0;
   }
 
   /* Map canvas placeholder */
