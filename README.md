@@ -5,7 +5,8 @@
 ## Features
 
 - `{% place %}` shortcode renders an independent interactive map per shortcode
-- `{% place_list %}` shortcode renders a sortable table of places with tag filtering and row count
+- `{% place_list %}` shortcode renders a sortable table of places with tag filtering, row count, optional grouping, and multi-level collapsible summary headers
+- Multi-value fields (e.g. multiple visit dates) render as joined cells with sort behaviour configurable via JSON Schema hints
 - YAML files converted to GeoJSON at build time — JS fetches them at runtime
 - Flexible spec syntax: single file, single place via `#id`, entire folder, or comma-separated mix
 - File-level metadata (anime title, tags, country…) applied as defaults to every place in the file
@@ -160,6 +161,61 @@ Each `{% place %}` shortcode renders its own independent map.
 
 > **Note:** Fragment (`#`) syntax filters which places appear in the popup, but the map still fetches the full GeoJSON file. A future version may support per-feature filtering.
 
+## Grouping and summary headers (`place_list`)
+
+`{% place_list %}` accepts kwargs to collapse rows by shared field values and to surface those values as section headers:
+
+```text
+{% place_list pilgrimage group_by="country,city" group_summary_at="country,city" aggregate="date:year" %}
+```
+
+| Kwarg | Description |
+| --- | --- |
+| `group_by` | Comma-separated fields. Places sharing the same tuple of these values collapse into one row. The first non-empty value wins for non-aggregated fields; `tags` are unioned. |
+| `aggregate` | `field:op` pairs, comma-separated. Currently `year` collects unique years from a date-like field, sorted ascending and comma-joined. |
+| `group_summary_at` | A prefix of `group_by`. Listed fields are removed from data-row columns and emitted as section headers above each group. |
+
+When `group_summary_at` lists multiple fields, each level renders as a nested heading: depth-0 most prominent, deeper levels smaller and indented, each with its own background colour. A subtotal place count appears under every level (configurable via `OSM_LIST_GROUP_COUNT_TEMPLATE`).
+
+Headers are interactive:
+
+- **Click** a header (or focus + Enter / Space) to collapse its subtree; click again to expand.
+- Each header has a stable `id="osm-group--<slug>"` for deep linking — e.g. `page.html#osm-group--japan--tokyo`. Loading the page with that hash auto-expands all ancestor groups so the target row is visible.
+
+Sorting a column re-orders data rows *within* each leaf group; group-header rows stay pinned in their YAML/define order so the hierarchy is preserved.
+
+## Multi-value fields and schema hints
+
+A YAML field can hold a list — useful for things like multiple visit dates on the same place:
+
+```yaml
+- name: 某神社
+  lat: 35.7
+  lon: 139.7
+  date: [2024-01-15, 2025-03-12]
+```
+
+The table joins list values into one cell. Two `x-osm-*` keys on the field's schema entry control display and sorting:
+
+```yaml
+# content/places/pilgrimage/_schema.yaml
+properties:
+  date:
+    type: array
+    items:
+      type: string
+      format: date
+    x-osm-list-join: ", "
+    x-osm-list-sort: max
+```
+
+| Hint | Values | Effect |
+| --- | --- | --- |
+| `x-osm-list-join` | any string (default `", "`) | Separator between list items in the cell. |
+| `x-osm-list-sort` | `min` / `max` / `first` / `last` | Sets the cell's `data-sort-value` so column sorting picks one canonical key. `max` = most-recent visit drives the sort. |
+
+Both keys use the JSON Schema `x-` extension prefix, so validators ignore them. The schema is loaded at render time for any spec passed to `{% place_list %}` — the same `_schema.yaml` you already use for validation provides these hints. Scalar values still render unchanged (`datetime.date` → ISO string).
+
 ## Place fields
 
 | Field | Required | Notes |
@@ -223,6 +279,7 @@ The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/
 | `OSM_LIST_SHORTCODE` | `"place_list"` | Shortcode name |
 | `OSM_LIST_FIELDS` | `[]` (auto) | Ordered list of field keys to show as columns. When empty, all non-reserved fields found in the data are used. |
 | `OSM_LIST_FIELD_LABELS` | `{}` | Override column header labels, e.g. `{"date": "Visited", "name": "Place"}` |
+| `OSM_LIST_GROUP_COUNT_TEMPLATE` | `"{n} places"` | Format string for the per-group subtotal under `group_summary_at` headers. `{n}` is the place count. Set to `""` to omit. |
 | `OSM_VALIDATE_SCHEMA_FILENAMES` | `["_schema.yaml", "_schema.yml", "_schema.json"]` | Filenames the validator looks for. Accepts a string or list. |
 | `OSM_VALIDATE_STRICT` | `False` | Raise `RuntimeError` on validation failure instead of just logging warnings. |
 

@@ -47,6 +47,14 @@ _LIST_RESERVED = frozenset(
 )
 
 
+def _slugify(value: str) -> str:
+    """Slug for an HTML id / URL fragment. Keeps letter chars (incl. CJK)
+    and digits, swaps whitespace for hyphens, drops everything else."""
+    s = re.sub(r"\s+", "-", str(value).strip())
+    out = [ch for ch in s if ch == "-" or ch.isalnum()]
+    return "".join(out).lower() or "group"
+
+
 def _is_place_yaml(path: Path) -> bool:
     """True if ``path`` is a place YAML (not a schema/private underscore file)."""
     return path.suffix in (".yml", ".yaml") and not path.name.startswith("_")
@@ -437,6 +445,39 @@ def _validate_yaml_files(root: Path, settings: dict) -> None:
         )
 
 
+def _resolve_schema_properties(
+    specs: list[str],
+    resolver: "PlaceResolver",
+    settings: dict,
+) -> dict[str, Any]:
+    """Find and merge JSON schema ``properties`` for the given specs.
+
+    Used at render time so cell rendering can read display hints
+    (``x-osm-list-sort``, ``x-osm-list-join``). Multiple distinct schemas
+    merge with later-wins semantics. Returns ``{}`` if no schema is found.
+    """
+    schema_names = _schema_filenames(settings)
+    seen: dict[Path, dict[str, Any]] = {}
+    for spec in specs:
+        for path in resolver.resolve_to_paths(spec):
+            sp = _find_schema_for(path, resolver.root, schema_names)
+            if sp is None or sp in seen:
+                continue
+            try:
+                with open(sp, encoding="utf-8") as f:
+                    seen[sp] = yaml.safe_load(f) or {}
+            except (OSError, yaml.YAMLError) as e:
+                log.warning("pelican-osm: cannot load schema %s: %s", sp, e)
+                seen[sp] = {}
+
+    merged: dict[str, Any] = {}
+    for sch in seen.values():
+        props = sch.get("properties") or {}
+        if isinstance(props, dict):
+            merged.update(props)
+    return merged
+
+
 class PlaceResolver:
     """Resolves shortcode arguments to lists of place dicts."""
 
@@ -671,6 +712,42 @@ def _render_place_html(
     )
 
 
+def _format_scalar(value: Any) -> str:
+    """Render a scalar value for a table cell. ``datetime.date`` becomes ISO."""
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
+    return str(value)
+
+
+def _render_list_cell(
+    value: list[Any],
+    field_props: dict[str, Any],
+) -> tuple[str, str | None]:
+    """Render a list-valued field. Returns ``(display_html, sort_value)``.
+
+    Honors two ``x-osm-*`` schema hints:
+      * ``x-osm-list-join``: separator (default ``", "``)
+      * ``x-osm-list-sort``: ``min``/``max``/``first``/``last`` — used to set
+        ``data-sort-value`` so a multi-visit cell sorts deterministically.
+    """
+    join_sep = field_props.get("x-osm-list-join", ", ")
+    sort_op = field_props.get("x-osm-list-sort")
+
+    items = [_format_scalar(v) for v in value]
+    display = join_sep.join(items)
+    sort_value: str | None = None
+    if items:
+        if sort_op == "min":
+            sort_value = min(items)
+        elif sort_op == "max":
+            sort_value = max(items)
+        elif sort_op == "first":
+            sort_value = items[0]
+        elif sort_op == "last":
+            sort_value = items[-1]
+    return display, sort_value
+
+
 def _render_place_list_html(
     places: list[dict[str, Any]],
     fields: list[str],
@@ -679,6 +756,7 @@ def _render_place_list_html(
     aggregate: dict[str, str] | None = None,
     group_summary_at: list[str] | None = None,
     group_count_template: str = DEFAULT_GROUP_COUNT_TEMPLATE,
+    field_schema: dict[str, Any] | None = None,
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -697,7 +775,10 @@ def _render_place_list_html(
       * ``group_count_template``: format string used for the count line below
         each header. ``{n}`` is the number of underlying places. Set to ``""``
         to omit the count entirely.
+      * ``field_schema``: JSON Schema ``properties`` dict (or any per-field
+        config dict). Recognized hints: ``x-osm-list-join``, ``x-osm-list-sort``.
     """
+    field_schema = field_schema or {}
     if not places:
         return "<!-- pelican-osm: no places for list -->"
 
@@ -802,40 +883,88 @@ def _render_place_list_html(
         headers.append("<th>" + col_header("urls", "Links") + "</th>")
     col_count = len(headers)
 
+    def render_value_cell(field: str, value: Any) -> str:
+        if isinstance(value, list):
+            props = field_schema.get(field) or {}
+            display, sort_value = _render_list_cell(
+                value, props if isinstance(props, dict) else {}
+            )
+            if sort_value is not None:
+                return (
+                    f'<td data-sort-value="{sort_value.replace(chr(34), "&quot;")}">'
+                    f"{display}</td>"
+                )
+            return f"<td>{display}</td>"
+        if value == "" or value is None:
+            return "<td></td>"
+        return f"<td>{_format_scalar(value)}</td>"
+
     def render_data_row(row: dict[str, Any]) -> str:
         cells = [render_name_cell(row)]
         if has_tags:
             cells.append(f"<td>{render_tags(row.get('tags', []))}</td>")
         for f in data_fields:
-            cells.append(f"<td>{row.get(f, '')}</td>")
+            cells.append(render_value_cell(f, row.get(f, "")))
         if has_url:
             cells.append(f"<td>{render_urls(row.get('urls', []))}</td>")
         return "<tr>" + "".join(cells) + "</tr>"
 
     rendered_rows: list[str] = []
     if group_summary_at:
-        from itertools import groupby as _groupby
+        from collections import defaultdict
 
-        def _summary_key(row: dict[str, Any]) -> tuple:
-            return tuple(row.get(f, "") for f in group_summary_at)
+        # Pre-compute place counts at every prefix depth so each header can
+        # display its own subtotal (e.g. country total → city total → district
+        # total) regardless of how many descendant rows it spans.
+        prefix_counts: dict[tuple, int] = defaultdict(int)
+        for row in rows:
+            n = len(row.get("_places") or [row])
+            key = tuple(row.get(f, "") for f in group_summary_at)
+            for d in range(len(key)):
+                prefix_counts[key[: d + 1]] += n
 
-        for skey, group_iter in _groupby(rows, key=_summary_key):
-            group_rows = list(group_iter)
-            n_places = sum(len(r.get("_places") or [r]) for r in group_rows)
-            title = " · ".join(str(v) for v in skey if v != "")
-            count_html = ""
-            if group_count_template:
-                count_text = group_count_template.format(n=n_places)
-                count_html = f'<span class="osm-group-count">{count_text}</span>'
-            rendered_rows.append(
-                f'<tr class="osm-group-header">'
-                f'<td colspan="{col_count}">'
-                f'<strong class="osm-group-header-title">{title}</strong>'
-                f"{count_html}"
-                f"</td></tr>"
-            )
-            for row in group_rows:
-                rendered_rows.append(render_data_row(row))
+        used_ids: set[str] = set()
+
+        def _anchor_id(prefix: tuple) -> str:
+            slug_parts = [_slugify(v) for v in prefix]
+            base = "osm-group--" + "--".join(slug_parts)
+            anchor = base
+            n = 2
+            while anchor in used_ids:
+                anchor = f"{base}-{n}"
+                n += 1
+            used_ids.add(anchor)
+            return anchor
+
+        prev_key: tuple = ()
+        for row in rows:
+            cur_key = tuple(row.get(f, "") for f in group_summary_at)
+            for depth, val in enumerate(cur_key):
+                prefix = cur_key[: depth + 1]
+                prev_prefix = (
+                    prev_key[: depth + 1] if len(prev_key) >= depth + 1 else None
+                )
+                if prefix == prev_prefix:
+                    continue
+                title = str(val)
+                count_html = ""
+                if group_count_template:
+                    count_text = group_count_template.format(n=prefix_counts[prefix])
+                    count_html = f'<span class="osm-group-count">{count_text}</span>'
+                anchor_id = _anchor_id(prefix)
+                rendered_rows.append(
+                    f'<tr class="osm-group-header'
+                    f' osm-group-header--depth-{depth}"'
+                    f' data-depth="{depth}" id="{anchor_id}">'
+                    f'<td colspan="{col_count}">'
+                    f'<span class="osm-group-header-toggle"'
+                    f' aria-hidden="true">▾</span>'
+                    f'<strong class="osm-group-header-title">{title}</strong>'
+                    f"{count_html}"
+                    f"</td></tr>"
+                )
+            prev_key = cur_key
+            rendered_rows.append(render_data_row(row))
     else:
         for row in rows:
             rendered_rows.append(render_data_row(row))
@@ -956,6 +1085,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
         group_count_template = settings.get(
             "OSM_LIST_GROUP_COUNT_TEMPLATE", DEFAULT_GROUP_COUNT_TEMPLATE
         )
+        field_schema = _resolve_schema_properties(specs, resolver, settings)
 
         return _render_place_list_html(
             places,
@@ -965,6 +1095,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
             aggregate=aggregate,
             group_summary_at=group_summary_at,
             group_count_template=group_count_template,
+            field_schema=field_schema,
         )
 
     result = cast(str, list_pattern.sub(replace_list, result))

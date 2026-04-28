@@ -756,6 +756,209 @@ class TestRenderPlaceListHtml:
         )
         assert "2 places" in html
 
+    def test_group_summary_at_nested_emits_per_depth_headers(self):
+        # Two depths → each row gets a depth-0 + depth-1 header on first
+        # appearance; depth-0 is NOT repeated when only depth-1 changes.
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "T"},
+            {"name": "B", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "O"},
+            {"name": "C", "lat": 1.0, "lon": 2.0, "country": "TW", "city": "TPE"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["country", "city"],
+            {},
+            group_by=["country", "city"],
+            group_summary_at=["country", "city"],
+        )
+        assert html.count("osm-group-header--depth-0") == 2  # JP, TW
+        assert html.count("osm-group-header--depth-1") == 3  # T, O, TPE
+        assert 'data-depth="0"' in html
+        assert 'data-depth="1"' in html
+
+    def test_group_summary_at_nested_counts_at_each_level(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "T"},
+            {"name": "B", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "O"},
+            {"name": "C", "lat": 1.0, "lon": 2.0, "country": "TW", "city": "TPE"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["country", "city"],
+            {},
+            group_by=["country", "city"],
+            group_summary_at=["country", "city"],
+        )
+        # JP rolls up 2 places, TW rolls up 1, each leaf city has 1.
+        assert "2 places" in html
+        assert "1 places" in html
+
+    def test_group_summary_at_nested_emits_anchor_ids(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "Tokyo"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["country", "city"],
+            {},
+            group_by=["country", "city"],
+            group_summary_at=["country", "city"],
+        )
+        assert 'id="osm-group--jp"' in html
+        assert 'id="osm-group--jp--tokyo"' in html
+
+    def test_list_cell_joins_with_default_separator(self):
+        # A multi-visit place: list value gets joined for display.
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024-01-01", "2025-03-12"]},
+        ]
+        html = _render_place_list_html(places, ["date"], {})
+        assert "2024-01-01, 2025-03-12" in html
+
+    def test_list_cell_custom_separator_via_schema(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024", "2025"]},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {},
+            field_schema={"date": {"x-osm-list-join": " · "}},
+        )
+        assert "2024 · 2025" in html
+
+    def test_list_cell_sort_max_emits_data_sort_value(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024-01-01", "2025-03-12"]},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {},
+            field_schema={"date": {"x-osm-list-sort": "max"}},
+        )
+        # Most recent visit is what sort should compare against.
+        assert 'data-sort-value="2025-03-12"' in html
+
+    def test_list_cell_sort_min_emits_data_sort_value(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2025-03-12", "2024-01-01"]},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {},
+            field_schema={"date": {"x-osm-list-sort": "min"}},
+        )
+        assert 'data-sort-value="2024-01-01"' in html
+
+    def test_list_cell_datetime_items_render_iso(self):
+        # PyYAML produces datetime.date for unquoted dates; the list cell must
+        # not leak Python repr into the HTML.
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "date": [datetime.date(2024, 1, 1), datetime.date(2025, 3, 12)],
+            },
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {},
+            field_schema={"date": {"x-osm-list-sort": "max"}},
+        )
+        assert "2024-01-01, 2025-03-12" in html
+        assert "datetime.date" not in html
+        assert 'data-sort-value="2025-03-12"' in html
+
+    def test_scalar_datetime_renders_iso(self):
+        # Backward compat: a scalar date value still renders as ISO.
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": datetime.date(2024, 1, 1)},
+        ]
+        html = _render_place_list_html(places, ["date"], {})
+        assert "2024-01-01" in html
+        assert "datetime.date" not in html
+
+    def test_list_cell_no_sort_hint_omits_data_sort_value(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024", "2025"]},
+        ]
+        html = _render_place_list_html(places, ["date"], {})
+        # Default behavior: no sort hint → no data-sort-value on the list cell.
+        # The Name cell always carries one for icon-text exclusion, so exactly
+        # one occurrence overall (the Name cell, not the Date cell).
+        assert html.count("data-sort-value=") == 1
+
+    def test_schema_title_drives_column_header(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2024-01-01"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {},
+            field_schema={"date": {"title": "日期"}},
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "<th>日期</th>" in thead
+
+    def test_schema_title_overrides_field_labels(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2024-01-01"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {"date": "Visited"},  # OSM_LIST_FIELD_LABELS
+            field_schema={"date": {"title": "日期"}},  # schema wins
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "<th>日期</th>" in thead
+        assert "Visited" not in thead
+
+    def test_field_labels_used_when_schema_has_no_title(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2024-01-01"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["date"],
+            {"date": "Visited"},
+            field_schema={"date": {"type": "string"}},  # no title
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "<th>Visited</th>" in thead
+
+    def test_schema_title_applies_to_reserved_columns(self):
+        # name / tags / urls are special-cased columns but should still honor
+        # schema title so the whole header row can be translated from one place.
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "tags": ["x"],
+                "urls": [{"href": "https://example.com"}],
+            },
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            field_schema={
+                "name": {"title": "地點"},
+                "tags": {"title": "標籤"},
+                "urls": {"title": "連結"},
+            },
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "<th>地點</th>" in thead
+        assert "<th>標籤</th>" in thead
+        assert "<th>連結</th>" in thead
+
 
 # ---------------------------------------------------------------------------
 # _validate_place
