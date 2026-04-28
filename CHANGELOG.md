@@ -1,3 +1,17 @@
+## 0.8.0 (2026-04-28)
+
+### Feat
+
+- nested group_summary_at, schema-driven list cells
+- dark-mode + i18n for place_list group summary header
+- add group_by, aggregate, group_summary_at kwargs to place_list
+- shortcode kwarg parsing and tag append-merge in YAML loader
+- add opt-in JSON Schema validation for place YAML
+
+### Fix
+
+- make dark mode follow host theme's class-based toggle
+
 ## 0.7.0 (2026-04-25)
 
 ### Feat
