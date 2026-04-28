@@ -72,8 +72,14 @@
   --osm-fs-btn-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   --osm-fs-btn-hover-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 
-  /* Place list — group_summary_at header rows */
+  /* Place list — group_summary_at header rows.
+     -bg is the single-depth/fallback color; -bg-{0..3} grade from most
+     prominent (depth 0) to least, so nested groupings read at a glance. */
   --osm-group-header-bg: #e8f0fe;
+  --osm-group-header-bg-0: #c9d8f3;
+  --osm-group-header-bg-1: #dde7fa;
+  --osm-group-header-bg-2: #ebf0fb;
+  --osm-group-header-bg-3: #f3f6fc;
   --osm-group-header-color: #1a3a6c;
   --osm-group-header-border-color: #cdd9ee;
   --osm-group-count-color: #6a7a92;
@@ -827,6 +833,66 @@
   font-weight: normal;
 }
 
+/* Multi-level group_summary_at: scale typography down at each depth and
+   indent so the hierarchy is visible at a glance. */
+.osm-place-list .osm-group-header--depth-0 .osm-group-header-title {
+  font-size: 1.2em;
+}
+.osm-place-list .osm-group-header--depth-1 .osm-group-header-title {
+  font-size: 1.05em;
+}
+.osm-place-list .osm-group-header--depth-2 .osm-group-header-title {
+  font-size: 0.95em;
+}
+.osm-place-list .osm-group-header--depth-3 .osm-group-header-title {
+  font-size: 0.9em;
+}
+.osm-place-list .osm-group-header--depth-1 td {
+  padding-left: 1.6em;
+}
+.osm-place-list .osm-group-header--depth-2 td {
+  padding-left: 2.8em;
+}
+.osm-place-list .osm-group-header--depth-3 td {
+  padding-left: 4em;
+}
+
+/* Per-depth backgrounds for discoverability. We redeclare the base
+   --osm-group-header-bg variable on each td so every existing rule that
+   references it (hover, sticky-first-cell) picks up the depth-specific
+   color via the cascade — no need to fork those rules. */
+.osm-place-list .osm-group-header--depth-0 td {
+  --osm-group-header-bg: var(--osm-group-header-bg-0);
+}
+.osm-place-list .osm-group-header--depth-1 td {
+  --osm-group-header-bg: var(--osm-group-header-bg-1);
+}
+.osm-place-list .osm-group-header--depth-2 td {
+  --osm-group-header-bg: var(--osm-group-header-bg-2);
+}
+.osm-place-list .osm-group-header--depth-3 td {
+  --osm-group-header-bg: var(--osm-group-header-bg-3);
+}
+
+/* Click-to-collapse affordance */
+.osm-place-list .osm-group-header {
+  cursor: pointer;
+}
+.osm-group-header-toggle {
+  display: inline-block;
+  margin-right: 0.4em;
+  color: var(--osm-group-count-color);
+  transition: transform 0.15s ease;
+}
+.osm-place-list .osm-group-header--collapsed .osm-group-header-toggle {
+  transform: rotate(-90deg);
+}
+
+/* Hide rows whose ancestor header is collapsed (managed by JS). */
+.osm-place-list tr.osm-row-hidden {
+  display: none;
+}
+
 /* Sortable column headers */
 .osm-place-list th[data-sortable] {
   cursor: pointer;
@@ -1088,6 +1154,10 @@
   --osm-fs-btn-hover-bg: #3a3a3a;
 
   --osm-group-header-bg: #2a3a52;
+  --osm-group-header-bg-0: #3d5379;
+  --osm-group-header-bg-1: #324466;
+  --osm-group-header-bg-2: #283750;
+  --osm-group-header-bg-3: #232c41;
   --osm-group-header-color: #e8f0fe;
   --osm-group-header-border-color: #3d5275;
   --osm-group-count-color: #9aa8c0;
@@ -1129,6 +1199,10 @@
     --osm-fs-btn-hover-bg: #3a3a3a;
 
     --osm-group-header-bg: #2a3a52;
+    --osm-group-header-bg-0: #3d5379;
+    --osm-group-header-bg-1: #324466;
+    --osm-group-header-bg-2: #283750;
+    --osm-group-header-bg-3: #232c41;
     --osm-group-header-color: #e8f0fe;
     --osm-group-header-border-color: #3d5275;
     --osm-group-count-color: #9aa8c0;

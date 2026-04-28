@@ -765,15 +765,35 @@
     th.dataset.sort = newDir;
     setSortIcon(th, newDir);
 
-    const rows = Array.from(tbody.querySelectorAll("tr"));
-    rows.sort((a, b) =>
-      compareValues(
-        cellSortValue(a.cells[colIdx]),
-        cellSortValue(b.cells[colIdx]),
-        newDir,
-      ),
-    );
-    rows.forEach((r) => tbody.appendChild(r));
+    // Sort within each contiguous run of data rows so group_summary_at
+    // header rows stay pinned in place and groups aren't reshuffled into
+    // each other. Header rows have a colspan and lack the column we're
+    // sorting on, so including them in the sort produced garbage.
+    const children = Array.from(tbody.children);
+    const reattach = [];
+    let run = [];
+    const flushRun = () => {
+      if (run.length === 0) return;
+      run.sort((a, b) =>
+        compareValues(
+          cellSortValue(a.cells[colIdx]),
+          cellSortValue(b.cells[colIdx]),
+          newDir,
+        ),
+      );
+      reattach.push(...run);
+      run = [];
+    };
+    for (const row of children) {
+      if (row.classList.contains("osm-group-header")) {
+        flushRun();
+        reattach.push(row);
+      } else {
+        run.push(row);
+      }
+    }
+    flushRun();
+    reattach.forEach((r) => tbody.appendChild(r));
   }
 
   // ── Tag filtering for place-list tables ────────────────────────
@@ -785,7 +805,9 @@
     function updateCount() {
       if (!countEl) return;
       const visible = originalRows.filter(
-        (r) => r.style.display !== "none",
+        (r) =>
+          !r.classList.contains("osm-group-header") &&
+          r.style.display !== "none",
       ).length;
       countEl.textContent =
         typeof i18n.placeCount === "function"
@@ -835,11 +857,100 @@
     });
   }
 
+  // ── Multi-level group_summary_at: click/keyboard to collapse a subtree ───
+  function initGroupCollapse(table) {
+    const tbody = table.querySelector("tbody");
+    if (!tbody) return;
+    const headers = Array.from(
+      tbody.querySelectorAll("tr.osm-group-header"),
+    );
+    if (headers.length === 0) return;
+
+    function recompute() {
+      // Walk top-down. `collapsedAt` is the depth of the shallowest
+      // currently-collapsed ancestor; rows beneath stay hidden until we
+      // emerge to a header at that depth or shallower.
+      let collapsedAt = null;
+      Array.from(tbody.children).forEach((row) => {
+        if (row.classList.contains("osm-group-header")) {
+          const d = Number(row.dataset.depth) || 0;
+          if (collapsedAt !== null && d <= collapsedAt) {
+            collapsedAt = null;
+          }
+          const hidden = collapsedAt !== null && d > collapsedAt;
+          row.classList.toggle("osm-row-hidden", hidden);
+          if (
+            !hidden &&
+            row.classList.contains("osm-group-header--collapsed") &&
+            collapsedAt === null
+          ) {
+            collapsedAt = d;
+          }
+        } else {
+          row.classList.toggle("osm-row-hidden", collapsedAt !== null);
+        }
+      });
+    }
+
+    headers.forEach((h) => {
+      h.setAttribute("role", "button");
+      h.setAttribute("tabindex", "0");
+      h.setAttribute("aria-expanded", "true");
+      function toggle(e) {
+        // Let real anchor clicks (e.g. inside a header title) behave normally
+        if (e && e.target && e.target.closest("a")) return;
+        const collapsed = h.classList.toggle("osm-group-header--collapsed");
+        h.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        recompute();
+      }
+      h.addEventListener("click", toggle);
+      h.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          toggle(e);
+        }
+      });
+    });
+
+    // If the URL targets a header inside this table, expand its ancestors
+    // so the deep-link actually reveals the row.
+    function expandToHash() {
+      const id = (location.hash || "").slice(1);
+      if (!id) return;
+      const target = tbody.querySelector(`#${CSS.escape(id)}`);
+      if (!target) return;
+      let row = target.previousElementSibling;
+      let depth = Number(target.dataset.depth) || 0;
+      while (row && depth > 0) {
+        if (row.classList.contains("osm-group-header")) {
+          const d = Number(row.dataset.depth) || 0;
+          if (d < depth) {
+            row.classList.remove("osm-group-header--collapsed");
+            row.setAttribute("aria-expanded", "true");
+            depth = d;
+          }
+        }
+        row = row.previousElementSibling;
+      }
+      target.classList.remove("osm-group-header--collapsed");
+      target.setAttribute("aria-expanded", "true");
+      recompute();
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    expandToHash();
+    window.addEventListener("hashchange", expandToHash);
+  }
+
   function initSortableTables() {
     document.querySelectorAll(".osm-place-list").forEach((table) => {
       const tbody = table.querySelector("tbody");
       // Snapshot original row order for reset
       const originalRows = Array.from(tbody.querySelectorAll("tr"));
+      // Place count (and tag-filter visible-count) reflects real places, not
+      // synthetic group_summary_at header rows.
+      const dataRows = originalRows.filter(
+        (r) => !r.classList.contains("osm-group-header"),
+      );
 
       table.querySelectorAll("thead th").forEach((th, colIdx) => {
         th.setAttribute("data-sortable", "");
@@ -854,7 +965,7 @@
       const wrapper = table.closest(".osm-place-list-wrapper");
       const countEl = wrapper && wrapper.querySelector(".osm-place-list-count");
       if (countEl) {
-        const n = originalRows.length;
+        const n = dataRows.length;
         countEl.textContent =
           typeof i18n.placeCount === "function"
             ? i18n.placeCount(n)
@@ -863,6 +974,9 @@
 
       // Tag filtering
       initTableTagFilter(table, originalRows, countEl);
+
+      // Multi-level group_summary_at collapse
+      initGroupCollapse(table);
     });
   }
 
