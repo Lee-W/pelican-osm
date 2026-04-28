@@ -77,6 +77,25 @@
   --osm-group-header-color: #1a3a6c;
   --osm-group-header-border-color: #cdd9ee;
   --osm-group-count-color: #6a7a92;
+
+  /* Map canvas placeholder */
+  --osm-map-bg: #e8e8e8;
+
+  /* Place list — table colors swapped per theme */
+  --osm-table-bg: #fff;
+  --osm-table-th-color: inherit;
+  --osm-table-th-border-color: #ccc;
+  --osm-table-cell-border-color: #e0e0e0;
+  --osm-table-row-hover-bg: #fafafa;
+  --osm-table-sticky-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.12);
+  --osm-sort-hover-bg: #ebebeb;
+  --osm-sort-icon-opacity: 0.3;
+
+  /* Leaflet popup */
+  --osm-popup-bg: #fff;
+  --osm-popup-color: #333;
+  --osm-popup-shadow: 0 3px 14px rgba(0, 0, 0, 0.4);
+  --osm-popup-name-color: inherit;
 }
 
 /* --------------------------------------------------------------------------
@@ -99,7 +118,7 @@
   width: 100%;
   height: var(--osm-map-height);
   min-height: 200px;
-  background: #e8e8e8;
+  background: var(--osm-map-bg);
   display: block;
   position: relative;
 }
@@ -656,18 +675,19 @@
   padding: 0.5em 0.75em;
   text-align: left;
   vertical-align: top;
-  border-bottom: 1px solid #e0e0e0;
+  border-bottom: 1px solid var(--osm-table-cell-border-color);
 }
 
 .osm-place-list th {
   font-weight: 600;
   background: var(--osm-caption-bg, #f5f5f5);
-  border-bottom: 2px solid #ccc;
+  color: var(--osm-table-th-color);
+  border-bottom: 2px solid var(--osm-table-th-border-color);
   white-space: nowrap;
 }
 
 .osm-place-list tbody tr:hover {
-  background: #fafafa;
+  background: var(--osm-table-row-hover-bg);
 }
 
 .osm-place-list td a {
@@ -722,7 +742,7 @@
   left: 0;
   z-index: 1;
   /* shadow on the right edge signals there is more content */
-  box-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--osm-table-sticky-shadow);
 }
 
 .osm-place-list th:first-child {
@@ -731,11 +751,11 @@
 }
 
 .osm-place-list td:first-child {
-  background: var(--osm-table-bg, #fff);
+  background: var(--osm-table-bg);
 }
 
 .osm-place-list tbody tr:hover td:first-child {
-  background: #fafafa;
+  background: var(--osm-table-row-hover-bg);
 }
 
 /* Map icon links inside the Name cell — shown on a new line */
@@ -814,14 +834,14 @@
 }
 
 .osm-place-list th[data-sortable]:hover {
-  background: var(--osm-sort-hover-bg, #ebebeb);
+  background: var(--osm-sort-hover-bg);
 }
 
 /* ⇅ neutral hint — faint so it doesn't distract */
 .osm-sort-icon {
   margin-left: 0.3em;
   font-size: 0.75em;
-  opacity: 0.3;
+  opacity: var(--osm-sort-icon-opacity);
 }
 
 /* ▲ / ▼ active indicator — fully visible */
@@ -1003,11 +1023,78 @@
   right: 15px;
 }
 
+/* --------------------------------------------------------------------------
+   Leaflet popup theming — always uses vars so dark mode swap covers it.
+   Light defaults match Leaflet's built-in look.
+   -------------------------------------------------------------------------- */
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--osm-popup-bg);
+  color: var(--osm-popup-color);
+  box-shadow: var(--osm-popup-shadow);
+}
+
+.osm-popup-name {
+  color: var(--osm-popup-name-color);
+}
+
 /* ==========================================================================
    Dark mode
+
+   Triggered in two ways, mirroring how host themes typically work:
+     1. <html class="theme-dark">  — explicit user toggle
+     2. system prefers dark AND the user has not explicitly opted into light
+        via <html class="theme-light">
+
+   Hosts that don't toggle classes still get system-driven dark mode. Hosts
+   that do (e.g. attila) get a map/table that follows their toggle.
+
+   All theme differences are expressed as CSS variable overrides only — the
+   selectors above already consume these vars, so no per-rule duplication is
+   needed.
    ========================================================================== */
+.theme-dark:root {
+  --osm-caption-bg: #2a2a2a;
+  --osm-caption-color: #bbb;
+  --osm-caption-border: 1px solid #444;
+
+  --osm-badge-tag-bg: #3a3a3a;
+  --osm-badge-tag-color: #ccc;
+
+  --osm-field-color: #ccc;
+  --osm-label-color: #eee;
+
+  --osm-links-color: #999;
+  --osm-links-anchor-color: #e57373;
+
+  --osm-map-bg: #2a2a2a;
+
+  --osm-table-bg: #1e1e1e;
+  --osm-table-th-color: #ddd;
+  --osm-table-th-border-color: #555;
+  --osm-table-cell-border-color: #333;
+  --osm-table-row-hover-bg: #2a2a2a;
+  --osm-table-sticky-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.5);
+  --osm-sort-hover-bg: #333;
+  --osm-sort-icon-opacity: 0.4;
+
+  --osm-popup-bg: #2a2a2a;
+  --osm-popup-color: #ddd;
+  --osm-popup-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+  --osm-popup-name-color: #fff;
+
+  --osm-fs-btn-bg: #2a2a2a;
+  --osm-fs-btn-color: #ddd;
+  --osm-fs-btn-hover-bg: #3a3a3a;
+
+  --osm-group-header-bg: #2a3a52;
+  --osm-group-header-color: #e8f0fe;
+  --osm-group-header-border-color: #3d5275;
+  --osm-group-count-color: #9aa8c0;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.theme-light) {
     --osm-caption-bg: #2a2a2a;
     --osm-caption-color: #bbb;
     --osm-caption-border: 1px solid #444;
@@ -1021,84 +1108,30 @@
     --osm-links-color: #999;
     --osm-links-anchor-color: #e57373;
 
+    --osm-map-bg: #2a2a2a;
+
     --osm-table-bg: #1e1e1e;
+    --osm-table-th-color: #ddd;
+    --osm-table-th-border-color: #555;
+    --osm-table-cell-border-color: #333;
+    --osm-table-row-hover-bg: #2a2a2a;
+    --osm-table-sticky-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.5);
     --osm-sort-hover-bg: #333;
+    --osm-sort-icon-opacity: 0.4;
+
+    --osm-popup-bg: #2a2a2a;
+    --osm-popup-color: #ddd;
+    --osm-popup-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
+    --osm-popup-name-color: #fff;
+
+    --osm-fs-btn-bg: #2a2a2a;
+    --osm-fs-btn-color: #ddd;
+    --osm-fs-btn-hover-bg: #3a3a3a;
 
     --osm-group-header-bg: #2a3a52;
     --osm-group-header-color: #e8f0fe;
     --osm-group-header-border-color: #3d5275;
     --osm-group-count-color: #9aa8c0;
-  }
-
-  /* Map canvas placeholder */
-  .osm-map {
-    background: #2a2a2a;
-  }
-
-  /* Table */
-  .osm-place-list th {
-    background: var(--osm-caption-bg);
-    color: #ddd;
-    border-bottom-color: #555;
-  }
-
-  .osm-place-list th,
-  .osm-place-list td {
-    border-bottom-color: #333;
-  }
-
-  .osm-place-list td:first-child {
-    background: var(--osm-table-bg);
-  }
-
-  .osm-place-list tbody tr:hover {
-    background: #2a2a2a;
-  }
-
-  .osm-place-list tbody tr:hover td:first-child {
-    background: #2a2a2a;
-  }
-
-  /* Sticky column shadow (needs to be visible on dark bg) */
-  .osm-place-list th:first-child,
-  .osm-place-list td:first-child {
-    box-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.5);
-  }
-
-  /* Popup */
-  .leaflet-popup-content-wrapper,
-  .leaflet-popup-tip {
-    background: #2a2a2a;
-    color: #ddd;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
-  }
-
-  .osm-popup-name {
-    color: #fff;
-  }
-
-  /* Fullscreen & reset buttons */
-  .osm-fullscreen-btn,
-  .osm-reset-btn {
-    background: #2a2a2a;
-    color: #ddd;
-  }
-
-  .osm-fullscreen-btn:hover,
-  .osm-reset-btn:hover {
-    background: #3a3a3a;
-  }
-
-  /* Caption bar */
-  .osm-map-caption {
-    background: var(--osm-caption-bg);
-    color: var(--osm-caption-color);
-    border-top-color: #444;
-  }
-
-  /* Sort neutral icon slightly brighter on dark */
-  .osm-sort-icon {
-    opacity: 0.4;
   }
 }
 
