@@ -163,7 +163,7 @@ Each `{% place %}` shortcode renders its own independent map.
 
 ## Grouping and summary headers (`place_list`)
 
-`{% place_list %}` accepts kwargs to collapse rows by shared field values and to surface those values as section headers:
+`{% place_list %}` accepts kwargs to bucket rows under shared field values and to surface those values as section headers:
 
 ```text
 {% place_list pilgrimage group_by="country,city" group_summary_at="country,city" aggregate="date:year" %}
@@ -171,8 +171,8 @@ Each `{% place %}` shortcode renders its own independent map.
 
 | Kwarg | Description |
 | --- | --- |
-| `group_by` | Comma-separated fields. Places sharing the same tuple of these values collapse into one row. The first non-empty value wins for non-aggregated fields; `tags` are unioned. |
-| `aggregate` | `field:op` pairs, comma-separated. Currently `year` collects unique years from a date-like field, sorted ascending and comma-joined. |
+| `group_by` | Comma-separated fields. Places sharing the same tuple of these values are bucketed contiguously so the table reads as a tree. Rows are preserved as-is unless `aggregate` is also given. |
+| `aggregate` | `field:op` pairs, comma-separated. Setting this opts into SQL-style collapse: rows sharing a `group_by` tuple merge into one, with the listed fields aggregated (e.g. `year` collects unique years, sorted ascending and comma-joined), other fields taking first-non-empty, and `tags` unioned. |
 | `group_summary_at` | A prefix of `group_by`. Listed fields are removed from data-row columns and emitted as section headers above each group. |
 
 When `group_summary_at` lists multiple fields, each level renders as a nested heading: depth-0 most prominent, deeper levels smaller and indented, each with its own background colour. A subtotal place count appears under every level (configurable via `OSM_LIST_GROUP_COUNT_TEMPLATE`).
@@ -184,9 +184,81 @@ Headers are interactive:
 
 Sorting a column re-orders data rows *within* each leaf group; group-header rows stay pinned in their YAML/define order so the hierarchy is preserved.
 
-## Multi-value fields and schema hints
+## Schema-driven `place_list` hints
 
-A YAML field can hold a list — useful for things like multiple visit dates on the same place:
+The same `_schema.yaml` you use for validation also drives several display behaviours of `{% place_list %}`. The schema is loaded at render time for whatever spec the shortcode targets, so you only need to declare each hint once next to the field definition.
+
+```yaml
+# content/places/pilgrimage/_schema.yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: object
+properties:
+  date:
+    type: array
+    items: { type: string, format: date }
+    title: 日期               # ← column header
+    x-osm-list-join: ", "     # ← separator for list cells
+    x-osm-list-sort: max      # ← canonical sort key (most-recent visit)
+  category:
+    type: string
+    title: 分類
+  internal_order:
+    type: integer
+    x-osm-list-hidden: true   # ← loaded but never rendered as a column
+```
+
+| Hint | Values | Effect |
+| --- | --- | --- |
+| `title` | any string | Column header text. Standard JSON Schema keyword. |
+| `x-osm-list-hidden` | `true` / `false` | Drop this field from the table. It's still loaded, so `group_by` / `aggregate` / sort can use it. Works for `tags` / `urls` too. |
+| `x-osm-list-join` | any string (default `", "`) | Separator between list items when a field holds a list (e.g. multiple visit dates). |
+| `x-osm-list-sort` | `min` / `max` / `first` / `last` | Sets the cell's `data-sort-value` so column sorting picks one canonical key. `max` = most-recent visit drives the sort. |
+
+Precedence for column labels: `schema.title` → `OSM_LIST_FIELD_LABELS` → auto-derived from key.
+
+`x-` prefixed keys are JSON Schema's standard extension namespace, so validators ignore them silently. Scalar values render unchanged — `datetime.date` becomes ISO string, lists are joined per `x-osm-list-join`.
+
+### Nested items: one place, many sub-rows
+
+When a place has multiple variants that share its location — halls within a cinema, seasonal menus at a restaurant, courses on a trail — declare them under an `items:` list. The map renders **one pin per place** (items ignored); `{% place_list %}` flattens, emitting **one row per item** with parent fields cascaded in.
+
+```yaml
+# content/places/theaters/taiwan.yaml
+vieshow-songren:
+  name: 松仁威秀影城
+  lat: 25.0368737
+  lon: 121.5679503
+  address: 台北市信義區松仁路58號10樓
+  country: 臺灣
+  city: 臺北
+  district: 信義
+  items:
+    - hall: "6 廳（TITAN）"
+      format: 一般 2D 廳
+      recommended_rows: G
+      hall_note: 一般 2D 最好的廳
+    - hall: "2 廳"
+      format: 一般 2D 廳
+      recommended_rows: E
+```
+
+**Items contract:** `name`, `lat`, and `lon` are parent-only — they describe the shared place identity and location, so by definition every item under one parent shares them. If an item dict supplies any of these, the plugin warns and drops it (parent's value wins). Items wanting their own identity column should use a distinct field (`hall`, `course`, `season`, …); other fields cascade with item winning on collision, and `tags` are unioned (parent first).
+
+The canonical pattern for rendering a tree where each parent is a section header:
+
+```text
+{% place_list theaters group_by="country,city,name" group_summary_at="country,city,name" %}
+```
+
+You get headers at country / city / theater, one row per hall under each theater header, and a single map pin per cinema on the map. Without `aggregate`, `group_by` only buckets rows for tree rendering — items keep their own values per row.
+
+When `name` lives in `group_summary_at`, the plugin hoists it into the section header (alongside the place's 🗺️·📍 map links) and drops the `Name` column from data rows — each row is then identified by its item-specific field (`hall` etc.) instead of repeating the parent name.
+
+JSON Schema for items lives under `properties.items.items.properties` — those `title` / `x-osm-list-*` hints are merged in alongside parent-level hints (item-level wins on collision).
+
+### Multi-value fields
+
+Want to record multiple visits to the same place? Just write the field as a list:
 
 ```yaml
 - name: 某神社
@@ -195,26 +267,7 @@ A YAML field can hold a list — useful for things like multiple visit dates on 
   date: [2024-01-15, 2025-03-12]
 ```
 
-The table joins list values into one cell. Two `x-osm-*` keys on the field's schema entry control display and sorting:
-
-```yaml
-# content/places/pilgrimage/_schema.yaml
-properties:
-  date:
-    type: array
-    items:
-      type: string
-      format: date
-    x-osm-list-join: ", "
-    x-osm-list-sort: max
-```
-
-| Hint | Values | Effect |
-| --- | --- | --- |
-| `x-osm-list-join` | any string (default `", "`) | Separator between list items in the cell. |
-| `x-osm-list-sort` | `min` / `max` / `first` / `last` | Sets the cell's `data-sort-value` so column sorting picks one canonical key. `max` = most-recent visit drives the sort. |
-
-Both keys use the JSON Schema `x-` extension prefix, so validators ignore them. The schema is loaded at render time for any spec passed to `{% place_list %}` — the same `_schema.yaml` you already use for validation provides these hints. Scalar values still render unchanged (`datetime.date` → ISO string).
+The cell joins to `2024-01-15, 2025-03-12`. With `x-osm-list-sort: max`, sorting "Date" descending puts your most-recent visit first.
 
 ## Place fields
 

@@ -42,8 +42,10 @@ DEFAULT_GROUP_COUNT_TEMPLATE = "{n} places"
 # Fields never shown as regular columns in the list table.
 # ``_places`` is the synthesised back-reference attached to a row by
 # ``_collapse_places`` so summary rendering can count originals.
+# ``items`` is the nested sub-row container; flattened away by
+# ``_expand_items`` before rendering, so it never appears as a column.
 _LIST_RESERVED = frozenset(
-    ["name", "lat", "lon", "id", "images", "urls", "tags", "_places"]
+    ["name", "lat", "lon", "id", "images", "urls", "tags", "_places", "items"]
 )
 
 
@@ -82,6 +84,53 @@ def _merge_place(
                 merged.append(tag)
                 seen.add(tag)
         result["tags"] = merged
+    return result
+
+
+_ITEM_FORBIDDEN_FIELDS = ("name", "lat", "lon")
+
+
+def _expand_items(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten places by expanding nested ``items`` lists into per-item rows.
+
+    A place may carry an ``items: [...]`` list of sub-rows that share the
+    parent's location/context. For each parent with items, this function emits
+    one row per item where parent fields cascade (item wins on collision) and
+    ``tags`` are unioned. Places without ``items`` pass through unchanged
+    (with the ``items`` key dropped if it was present but empty/invalid).
+
+    Item dicts must NOT carry ``name``, ``lat``, or ``lon``: those describe
+    the *parent* place's identity and location, which by definition is shared
+    by all items. If an item supplies one of these, we warn and drop it
+    (parent's value wins). Items wanting their own identity column should use
+    a distinct field (e.g. ``hall``, ``course``, ``season``).
+
+    The map / GeoJSON path does **not** call this — pins remain at the
+    parent level (one pin per place, regardless of item count).
+    """
+    result: list[dict[str, Any]] = []
+    for place in places:
+        items = place.get("items")
+        parent_fields = {k: v for k, v in place.items() if k != "items"}
+        if not isinstance(items, list) or not items:
+            result.append(parent_fields)
+            continue
+        parent_id = place.get("id") or place.get("name") or "<unknown>"
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            cleaned = {k: v for k, v in item.items()}
+            for field in _ITEM_FORBIDDEN_FIELDS:
+                if field in cleaned:
+                    log.warning(
+                        "pelican-osm: item %s[%d] has forbidden '%s' field; "
+                        "dropping (lat/lon/name belong to the parent place)",
+                        parent_id,
+                        idx,
+                        field,
+                    )
+                    del cleaned[field]
+            result.append(_merge_place(parent_fields, cleaned))
     return result
 
 
@@ -176,15 +225,39 @@ def _collapse_places(
     group_by: list[str],
     aggregate: dict[str, str],
 ) -> list[dict[str, Any]]:
-    """Collapse places into one row per ``group_by`` tuple.
+    """Group places by ``group_by`` for tree-style rendering.
 
-    Row order follows first-appearance of each group key. For non-aggregated
-    fields (other than ``tags``), the first non-empty value wins. ``tags`` are
-    unioned across the whole group, preserving order. Each returned row carries
-    a ``_places`` key with the original places for downstream summary rendering.
+    Two modes, controlled by whether ``aggregate`` is non-empty:
+
+    * **No aggregate** (the common case): each input place becomes one
+      output row. Rows are merely re-ordered so that everything sharing
+      a group-key tuple is contiguous, preserving first-appearance order
+      across keys and original order within a key. Each row carries
+      ``_places: [self]`` so summary count math still adds up.
+
+    * **With aggregate** (SQL-style collapse): all places sharing a group
+      key merge into a single row. Aggregate fields are computed via
+      ``_aggregate_field``; for other fields the first non-empty value
+      wins; ``tags`` are unioned (parent first). The merged row's
+      ``_places`` lists every collapsed place.
+
+    The first mode is what most ``group_by`` users want — they're asking
+    for a visual tree, not for set-style aggregation. Auto-merging without
+    an explicit ``aggregate`` directive silently destroys per-row data
+    (e.g. nested ``items`` rows would collapse into one).
     """
-    rows: dict[tuple, dict[str, Any]] = {}
     order: list[tuple] = []
+    if not aggregate:
+        buckets: dict[tuple, list[dict[str, Any]]] = {}
+        for place in places:
+            key = tuple(place.get(g, "") for g in group_by)
+            if key not in buckets:
+                buckets[key] = []
+                order.append(key)
+            buckets[key].append(place)
+        return [{**p, "_places": [p]} for key in order for p in buckets[key]]
+
+    rows: dict[tuple, dict[str, Any]] = {}
     for place in places:
         key = tuple(place.get(g, "") for g in group_by)
         if key not in rows:
@@ -475,6 +548,16 @@ def _resolve_schema_properties(
         props = sch.get("properties") or {}
         if isinstance(props, dict):
             merged.update(props)
+            # Descend into ``items.items.properties`` so per-item field hints
+            # (title, x-osm-list-*) also reach the renderer. Item-level keys
+            # win on collision, matching the row-level merge in _expand_items.
+            items_prop = props.get("items")
+            if isinstance(items_prop, dict):
+                item_schema = items_prop.get("items")
+                if isinstance(item_schema, dict):
+                    item_props = item_schema.get("properties") or {}
+                    if isinstance(item_props, dict):
+                        merged.update(item_props)
     return merged
 
 
@@ -765,10 +848,12 @@ def _render_place_list_html(
     used automatically.
 
     Optional grouping/aggregation:
-      * ``group_by``: collapse places sharing the same tuple of these fields
-        into one row (see ``_collapse_places``).
-      * ``aggregate``: per-field combiners applied while collapsing
-        (e.g., ``{"date": "year"}`` joins unique years).
+      * ``group_by``: bucket places sharing the same tuple of these fields
+        so they render contiguously (see ``_collapse_places``). Rows are
+        preserved as-is unless ``aggregate`` is also given.
+      * ``aggregate``: opt-in SQL-style collapse. With this set, all places
+        sharing a ``group_by`` tuple merge into one row; per-field combiners
+        (e.g. ``{"date": "year"}``) decide how aggregate fields are computed.
       * ``group_summary_at``: a prefix of ``group_by``. When set, those fields
         are removed from data row columns and instead emitted as synthetic
         ``<tr class="osm-group-header">`` rows at each group boundary.
@@ -779,6 +864,13 @@ def _render_place_list_html(
         config dict). Recognized hints: ``x-osm-list-join``, ``x-osm-list-sort``.
     """
     field_schema = field_schema or {}
+    if not places:
+        return "<!-- pelican-osm: no places for list -->"
+
+    # Flatten nested ``items`` sub-rows into per-item rows. Places without
+    # ``items`` pass through. The map shortcode does NOT do this (one pin
+    # per parent place, items ignored).
+    places = _expand_items(places)
     if not places:
         return "<!-- pelican-osm: no places for list -->"
 
@@ -804,13 +896,23 @@ def _render_place_list_html(
     summary_set = set(group_summary_at)
 
     # Auto-detect columns when none are configured
+    def is_hidden(field: str) -> bool:
+        # Schema-level escape hatch: ``x-osm-list-hidden: true`` keeps the
+        # field loaded (so group_by / sort / aggregate can still use it) but
+        # drops it from the rendered table — useful for ordering keys, raw
+        # geo fields, etc. that exist only to drive layout.
+        props = field_schema.get(field)
+        return bool(isinstance(props, dict) and props.get("x-osm-list-hidden") is True)
+
     if not fields:
         seen: list[str] = []
         for row in rows:
             for k in row:
-                if k not in _LIST_RESERVED and k not in seen:
+                if k not in _LIST_RESERVED and k not in seen and not is_hidden(k):
                     seen.append(k)
         fields = seen
+    else:
+        fields = [f for f in fields if not is_hidden(f)]
 
     # Fields that live in summary header rows are removed from data row columns
     data_fields = [f for f in fields if f not in summary_set]
@@ -854,28 +956,45 @@ def _render_place_list_html(
             if isinstance(u, dict) and u.get("href")
         )
 
+    def render_map_links(lat: Any, lon: Any) -> str:
+        """Render the 🗺️·📍 link span. Empty string when lat/lon missing.
+
+        Used both inside the data row's name cell and inside the summary
+        header for ``name`` when name is hoisted via ``group_summary_at``.
+        CSS class ``osm-list-map-links`` is ``display: block`` so the icons
+        appear on a new line below their sibling text.
+        """
+        if lat is None or lon is None:
+            return ""
+        osm_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=17"
+        gmaps_url = f"https://maps.google.com/?q={lat},{lon}"
+        return (
+            f'<span class="osm-list-map-links">'
+            f'<a href="{osm_url}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>'
+            f'<span class="osm-list-map-sep" aria-hidden="true">·</span>'
+            f'<a href="{gmaps_url}" target="_blank" rel="noopener" title="Google Maps">📍</a>'
+            f"</span>"
+        )
+
     def render_name_cell(place: dict[str, Any]) -> str:
         name = place.get("name", "")
-        lat = place.get("lat")
-        lon = place.get("lon")
-        if lat is not None and lon is not None:
-            osm_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=17"
-            gmaps_url = f"https://maps.google.com/?q={lat},{lon}"
-            map_links = (
-                f'<span class="osm-list-map-links">'
-                f'<a href="{osm_url}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>'
-                f'<span class="osm-list-map-sep" aria-hidden="true">·</span>'
-                f'<a href="{gmaps_url}" target="_blank" rel="noopener" title="Google Maps">📍</a>'
-                f"</span>"
-            )
-            return f'<td data-sort-value="{name}">{name}{map_links}</td>'
-        return f'<td data-sort-value="{name}">{name}</td>'
+        return (
+            f'<td data-sort-value="{name}">{name}'
+            f"{render_map_links(place.get('lat'), place.get('lon'))}</td>"
+        )
 
-    has_tags = any(row.get("tags") for row in rows)
-    has_url = any(row.get("urls") for row in rows)
+    has_tags = any(row.get("tags") for row in rows) and not is_hidden("tags")
+    has_url = any(row.get("urls") for row in rows) and not is_hidden("urls")
+
+    # When ``name`` is in group_summary_at, it's hoisted into the summary
+    # header (alongside its map links) and dropped from the data row column,
+    # mirroring how other summary fields are removed from data_fields.
+    name_is_summary = "name" in summary_set
 
     # Header
-    headers = ["<th>" + col_header("name", "Name") + "</th>"]
+    headers = []
+    if not name_is_summary:
+        headers.append("<th>" + col_header("name", "Name") + "</th>")
     if has_tags:
         headers.append("<th>" + col_header("tags", "Tags") + "</th>")
     headers += [f"<th>{col_header(f)}</th>" for f in data_fields]
@@ -900,7 +1019,9 @@ def _render_place_list_html(
         return f"<td>{_format_scalar(value)}</td>"
 
     def render_data_row(row: dict[str, Any]) -> str:
-        cells = [render_name_cell(row)]
+        cells = []
+        if not name_is_summary:
+            cells.append(render_name_cell(row))
         if has_tags:
             cells.append(f"<td>{render_tags(row.get('tags', []))}</td>")
         for f in data_fields:
@@ -951,6 +1072,12 @@ def _render_place_list_html(
                 if group_count_template:
                     count_text = group_count_template.format(n=prefix_counts[prefix])
                     count_html = f'<span class="osm-group-count">{count_text}</span>'
+                # When ``name`` is the summary field at this depth, surface the
+                # parent's map links inside the header so the block carries the
+                # place's identity AND its location (mirrors data-row name cell).
+                map_links_html = ""
+                if group_summary_at[depth] == "name":
+                    map_links_html = render_map_links(row.get("lat"), row.get("lon"))
                 anchor_id = _anchor_id(prefix)
                 rendered_rows.append(
                     f'<tr class="osm-group-header'
@@ -961,6 +1088,7 @@ def _render_place_list_html(
                     f' aria-hidden="true">▾</span>'
                     f'<strong class="osm-group-header-title">{title}</strong>'
                     f"{count_html}"
+                    f"{map_links_html}"
                     f"</td></tr>"
                 )
             prev_key = cur_key
@@ -1252,7 +1380,7 @@ def _place_to_feature(
 
     properties = {}
     for k, v in place.items():
-        if k in ("lat", "lon", "images"):
+        if k in ("lat", "lon", "images", "items"):
             continue
         if v == "" or v == [] or v is None:
             continue
