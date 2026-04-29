@@ -1,3 +1,14 @@
+## 0.10.0 (2026-04-29)
+
+### Feat
+
+- auto-translate group_summary_at count line via article Lang
+
+### Fix
+
+- protect {% ... %} shortcodes from Markdown attr_list extension
+- resolve per-place schema hints for all YAML shapes; add i18n column titles
+
 ## 0.9.0 (2026-04-29)
 
 ### Feat
