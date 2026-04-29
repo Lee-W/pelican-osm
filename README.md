@@ -343,7 +343,7 @@ The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/
 | `OSM_LIST_SHORTCODE` | `"place_list"` | Shortcode name |
 | `OSM_LIST_FIELDS` | `[]` (auto) | Ordered list of field keys to show as columns. When empty, all non-reserved fields found in the data are used. |
 | `OSM_LIST_FIELD_LABELS` | `{}` | Override column header labels, e.g. `{"date": "Visited", "name": "Place"}` |
-| `OSM_LIST_GROUP_COUNT_TEMPLATE` | `"{n} places"` | Format string for the per-group subtotal under `group_summary_at` headers. `{n}` is the place count. Set to `""` to omit. |
+| `OSM_LIST_GROUP_COUNT_TEMPLATE` | auto-detected from `Lang` / `DEFAULT_LANG` | Format string for the per-group subtotal under `group_summary_at` headers. `{n}` is the place count. Built-in defaults: `"{n} 個地點"` (`zh*`), `"{n} 件"` (`ja*`), `"{n} places"` (other). Set to `""` to omit, or to any string to override. |
 | `OSM_VALIDATE_SCHEMA_FILENAMES` | `["_schema.yaml", "_schema.yml", "_schema.json"]` | Filenames the validator looks for. Accepts a string or list. |
 | `OSM_VALIDATE_STRICT` | `False` | Raise `RuntimeError` on validation failure instead of just logging warnings. |
 

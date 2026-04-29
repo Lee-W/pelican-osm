@@ -39,6 +39,15 @@ DEFAULT_SCHEMA_FILENAMES = ("_schema.yaml", "_schema.yml", "_schema.json")
 # ``OSM_LIST_GROUP_COUNT_TEMPLATE`` for translation; set to ``""`` to suppress.
 DEFAULT_GROUP_COUNT_TEMPLATE = "{n} places"
 
+# Built-in count templates keyed by BCP-47 primary subtag, mirroring the JS
+# i18n defaults in static/js/osm-map.js. Picked automatically based on the
+# article's ``Lang:`` (or ``DEFAULT_LANG``) when ``OSM_LIST_GROUP_COUNT_TEMPLATE``
+# isn't set explicitly.
+BUILTIN_GROUP_COUNT_TEMPLATES = {
+    "zh": "{n} 個地點",
+    "ja": "{n} 件",
+}
+
 # Fields never shown as regular columns in the list table.
 # ``_places`` is the synthesised back-reference attached to a row by
 # ``_collapse_places`` so summary rendering can count originals.
@@ -855,6 +864,25 @@ def _render_list_cell(
     return display, sort_value
 
 
+def _resolve_group_count_template(settings: dict, lang: str | None) -> str:
+    """Pick the count-line template for ``group_summary_at`` headers.
+
+    Precedence: explicit ``OSM_LIST_GROUP_COUNT_TEMPLATE`` setting wins (even
+    when set to ``""`` to suppress) → built-in template matching the article's
+    lang (full tag first, then primary subtag) → English default.
+    """
+
+    if "OSM_LIST_GROUP_COUNT_TEMPLATE" in settings:
+        return cast(str, settings["OSM_LIST_GROUP_COUNT_TEMPLATE"])
+    if lang:
+        full = lang.lower()
+        primary = full.split("-", 1)[0]
+        for key in (full, primary):
+            if key in BUILTIN_GROUP_COUNT_TEMPLATES:
+                return BUILTIN_GROUP_COUNT_TEMPLATES[key]
+    return DEFAULT_GROUP_COUNT_TEMPLATE
+
+
 def _resolve_i18n_title(props: dict[str, Any], lang: str | None) -> str | None:
     """Pick a ``title`` from ``x-osm-list-i18n.title.<lang>`` if present.
 
@@ -1273,8 +1301,8 @@ def _process_content(
         group_by = _parse_csv_kwarg(kwargs.get("group_by", ""))
         aggregate = _parse_aggregate_kwarg(kwargs.get("aggregate", ""))
         group_summary_at = _parse_csv_kwarg(kwargs.get("group_summary_at", ""))
-        group_count_template = settings.get(
-            "OSM_LIST_GROUP_COUNT_TEMPLATE", DEFAULT_GROUP_COUNT_TEMPLATE
+        group_count_template = _resolve_group_count_template(
+            settings, lang or settings.get("DEFAULT_LANG")
         )
         field_schema = _resolve_schema_properties(specs, resolver, settings)
 
