@@ -25,6 +25,14 @@ except ImportError:
     jsonschema = None  # type: ignore[assignment]
     _HAS_JSONSCHEMA = False
 
+try:
+    import markdown as _markdown
+
+    _HAS_MARKDOWN = True
+except ImportError:
+    _markdown = None  # type: ignore[assignment]
+    _HAS_MARKDOWN = False
+
 log = logging.getLogger(__name__)
 
 DEFAULT_SHORTCODE = "place"
@@ -1328,6 +1336,96 @@ _article_url_map: dict[str, str] = {}
 _content_path: Path | None = None
 
 
+def _build_shortcode_pattern(shortcodes: list[str]) -> re.Pattern[str]:
+    """Compile the regex that matches every ``{% <shortcode> ... %}`` block.
+
+    Used both by the pre-Markdown stash extension and (logically) by the
+    HTML-stage substitution in ``_process_content``; the two regexes must
+    stay in sync so anything stashed at preprocess time is still recognized
+    when the substitution runs.
+    """
+    joined = "|".join(re.escape(s) for s in shortcodes)
+    return re.compile(r"\{%\s*(?:" + joined + r")\s+.+?\s*%\}", re.DOTALL)
+
+
+if _HAS_MARKDOWN:
+
+    class _ShortcodePreserver(_markdown.preprocessors.Preprocessor):
+        """Stash ``{% ... %}`` shortcode blocks via Markdown's ``htmlStash``
+        before any other extension can touch them.
+
+        Without this, Markdown's ``attr_list`` extension (bundled with
+        ``markdown.extensions.extra``) treats the ``{...}`` syntax as an
+        attribute list. When two shortcodes sit on adjacent lines they merge
+        into a single paragraph and the second ``{% ... %}`` gets eaten as
+        paragraph attributes — pelican-osm never sees it. Stashing makes the
+        block opaque to every other extension; Markdown restores it verbatim
+        at the end of conversion, after which ``_process_content`` does the
+        real substitution.
+        """
+
+        def __init__(self, md: Any, pattern: re.Pattern[str]) -> None:
+            super().__init__(md)
+            self._pattern = pattern
+
+        def run(self, lines: list[str]) -> list[str]:
+            text = "\n".join(lines)
+            text = self._pattern.sub(
+                lambda m: self.md.htmlStash.store(m.group(0)),
+                text,
+            )
+            return text.split("\n")
+
+    class _ShortcodePreserveExtension(_markdown.Extension):
+        def __init__(self, shortcodes: list[str]) -> None:
+            super().__init__()
+            if not shortcodes:
+                raise ValueError("shortcodes must be non-empty")
+            self._pattern = _build_shortcode_pattern(shortcodes)
+
+        def extendMarkdown(self, md: Any) -> None:
+            # Priority 25 sits between normalize_whitespace (30) and
+            # html_block (20). Running AFTER normalize_whitespace is required
+            # because that preprocessor strips STX/ETX control chars from
+            # source — which would silently corrupt our htmlStash
+            # placeholders. Running BEFORE html_block (and well before any
+            # block/tree processor like attr_list) means our stashed
+            # shortcodes pass through untouched.
+            md.preprocessors.register(
+                _ShortcodePreserver(md, self._pattern),
+                "pelican_osm_shortcode_preserve",
+                25,
+            )
+
+
+def _register_markdown_extension(settings: dict) -> None:
+    """Append our shortcode-preserving Markdown extension to ``MARKDOWN``.
+
+    No-op when ``markdown`` isn't installed (e.g., RST-only sites) or when
+    the user opts out via ``OSM_DISABLE_MARKDOWN_PROTECTION``. Idempotent so
+    repeated ``initialized`` signals (e.g. from i18n_subsites rebuilds)
+    don't stack copies.
+    """
+    if not _HAS_MARKDOWN:
+        return
+    if settings.get("OSM_DISABLE_MARKDOWN_PROTECTION"):
+        return
+
+    md_settings = settings.setdefault("MARKDOWN", {})
+    md_settings.setdefault("extensions", [])
+    md_settings.setdefault("extension_configs", {})
+    extensions = md_settings["extensions"]
+
+    if any(isinstance(e, _ShortcodePreserveExtension) for e in extensions):
+        return
+
+    shortcodes = [
+        settings.get("OSM_SHORTCODE", DEFAULT_SHORTCODE),
+        settings.get("OSM_LIST_SHORTCODE", DEFAULT_LIST_SHORTCODE),
+    ]
+    extensions.append(_ShortcodePreserveExtension(shortcodes))
+
+
 def _init_resolver(pelican_obj) -> None:
     global _resolver, _settings, _article_url_map, _content_path
     _article_url_map = {}
@@ -1354,6 +1452,8 @@ def _init_resolver(pelican_obj) -> None:
     _resolver = PlaceResolver(root)
     log.warning("pelican-osm: content_path=%s", content_path)
     log.warning("pelican-osm: places root=%s exists=%s", root, root.exists())
+
+    _register_markdown_extension(_settings)
 
     if root.exists():
         _validate_yaml_files(root, _settings)
