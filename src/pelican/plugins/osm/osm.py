@@ -518,6 +518,41 @@ def _validate_yaml_files(root: Path, settings: dict) -> None:
         )
 
 
+def _walk_schema_properties(schema: Any, out: dict[str, Any]) -> None:
+    """Walk a JSON schema and collect every per-property entry that could
+    describe a place field, regardless of which YAML shape the schema models.
+
+    Handles all three loader formats:
+      * **locations-based**: ``properties.locations.items.properties.*``
+      * **dict-of-places**: ``additionalProperties.properties.*``
+      * **bare list / nested items**: ``items.properties.*`` and
+        ``properties.items.items.properties.*``
+
+    Outer fields are collected first, then deeper fields override them — so an
+    item-level ``title`` or ``x-osm-list-hidden`` wins over a parent-level
+    entry of the same name, matching the row-merge precedence in
+    ``_expand_items``.
+    """
+    if not isinstance(schema, dict):
+        return
+
+    props = schema.get("properties")
+    if isinstance(props, dict):
+        for k, v in props.items():
+            if isinstance(v, dict):
+                out[k] = v
+        for v in props.values():
+            _walk_schema_properties(v, out)
+
+    item = schema.get("items")
+    if isinstance(item, dict):
+        _walk_schema_properties(item, out)
+
+    ap = schema.get("additionalProperties")
+    if isinstance(ap, dict):
+        _walk_schema_properties(ap, out)
+
+
 def _resolve_schema_properties(
     specs: list[str],
     resolver: "PlaceResolver",
@@ -526,8 +561,9 @@ def _resolve_schema_properties(
     """Find and merge JSON schema ``properties`` for the given specs.
 
     Used at render time so cell rendering can read display hints
-    (``x-osm-list-sort``, ``x-osm-list-join``). Multiple distinct schemas
-    merge with later-wins semantics. Returns ``{}`` if no schema is found.
+    (``x-osm-list-sort``, ``x-osm-list-join``, ``x-osm-list-hidden``,
+    ``x-osm-list-i18n``). Multiple distinct schemas merge with later-wins
+    semantics. Returns ``{}`` if no schema is found.
     """
     schema_names = _schema_filenames(settings)
     seen: dict[Path, dict[str, Any]] = {}
@@ -545,19 +581,7 @@ def _resolve_schema_properties(
 
     merged: dict[str, Any] = {}
     for sch in seen.values():
-        props = sch.get("properties") or {}
-        if isinstance(props, dict):
-            merged.update(props)
-            # Descend into ``items.items.properties`` so per-item field hints
-            # (title, x-osm-list-*) also reach the renderer. Item-level keys
-            # win on collision, matching the row-level merge in _expand_items.
-            items_prop = props.get("items")
-            if isinstance(items_prop, dict):
-                item_schema = items_prop.get("items")
-                if isinstance(item_schema, dict):
-                    item_props = item_schema.get("properties") or {}
-                    if isinstance(item_props, dict):
-                        merged.update(item_props)
+        _walk_schema_properties(sch, merged)
     return merged
 
 
@@ -831,6 +855,30 @@ def _render_list_cell(
     return display, sort_value
 
 
+def _resolve_i18n_title(props: dict[str, Any], lang: str | None) -> str | None:
+    """Pick a ``title`` from ``x-osm-list-i18n.title.<lang>`` if present.
+
+    Tries an exact case-insensitive match on the full lang tag first
+    (``zh-tw``), then the primary subtag (``zh``). Returns ``None`` if no
+    match — caller should fall back to the plain ``title`` keyword.
+    """
+    if not lang:
+        return None
+    i18n = props.get("x-osm-list-i18n")
+    if not isinstance(i18n, dict):
+        return None
+    titles = i18n.get("title")
+    if not isinstance(titles, dict):
+        return None
+    lower = {k.lower(): v for k, v in titles.items() if isinstance(k, str)}
+    candidate = lower.get(lang.lower())
+    if not isinstance(candidate, str) or not candidate:
+        primary = lang.split("-", 1)[0].lower()
+        if primary != lang.lower():
+            candidate = lower.get(primary)
+    return candidate if isinstance(candidate, str) and candidate else None
+
+
 def _render_place_list_html(
     places: list[dict[str, Any]],
     fields: list[str],
@@ -840,6 +888,7 @@ def _render_place_list_html(
     group_summary_at: list[str] | None = None,
     group_count_template: str = DEFAULT_GROUP_COUNT_TEMPLATE,
     field_schema: dict[str, Any] | None = None,
+    lang: str | None = None,
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -918,12 +967,16 @@ def _render_place_list_html(
     data_fields = [f for f in fields if f not in summary_set]
 
     def col_header(f: str, fallback: str | None = None) -> str:
-        # Precedence: JSON Schema ``title`` (co-located with the field) wins,
-        # then OSM_LIST_FIELD_LABELS, then a provided fallback or auto-derived
-        # from the key. ``title`` is a standard JSON Schema keyword for the
-        # human-readable name of a property, so this is what authors expect.
+        # Precedence: ``x-osm-list-i18n.title.<lang>`` (locale-specific) →
+        # JSON Schema ``title`` (default-locale fallback) → OSM_LIST_FIELD_LABELS
+        # → provided fallback or auto-derived from the key. ``title`` is a
+        # standard JSON Schema keyword; ``x-osm-list-i18n`` is our extension
+        # for per-language overrides without duplicating whole schemas.
         props = field_schema.get(f)
         if isinstance(props, dict):
+            localized = _resolve_i18n_title(props, lang)
+            if localized:
+                return localized
             title = props.get("title")
             if isinstance(title, str) and title:
                 return title
@@ -1108,8 +1161,18 @@ def _render_place_list_html(
     )
 
 
-def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> str:
-    """Replace all {% place ... %} and {% place_list ... %} shortcodes in content."""
+def _process_content(
+    content: str,
+    resolver: PlaceResolver,
+    settings: dict,
+    lang: str | None = None,
+) -> str:
+    """Replace all {% place ... %} and {% place_list ... %} shortcodes in content.
+
+    ``lang`` is the BCP-47 language tag of the article being rendered (e.g.
+    ``zh-tw``). It controls per-locale schema title lookups via
+    ``x-osm-list-i18n``. Falls back to ``settings["DEFAULT_LANG"]`` when None.
+    """
     shortcode = settings.get("OSM_SHORTCODE", DEFAULT_SHORTCODE)
     map_height = settings.get("OSM_MAP_HEIGHT", DEFAULT_MAP_HEIGHT)
     tile_url = settings.get("OSM_MAP_TILE", DEFAULT_MAP_TILE)
@@ -1224,6 +1287,7 @@ def _process_content(content: str, resolver: PlaceResolver, settings: dict) -> s
             group_summary_at=group_summary_at,
             group_count_template=group_count_template,
             field_schema=field_schema,
+            lang=lang or settings.get("DEFAULT_LANG"),
         )
 
     result = cast(str, list_pattern.sub(replace_list, result))
@@ -1292,7 +1356,10 @@ def _process_article(content) -> None:
         return
 
     if hasattr(content, "_content"):
-        content._content = _process_content(content._content, _resolver, _settings)
+        article_lang = getattr(content, "lang", None) or _settings.get("DEFAULT_LANG")
+        content._content = _process_content(
+            content._content, _resolver, _settings, lang=article_lang
+        )
 
 
 def _build_article_url_map(pelican_obj) -> dict[str, str]:

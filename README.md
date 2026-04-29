@@ -213,8 +213,19 @@ properties:
 | `x-osm-list-hidden` | `true` / `false` | Drop this field from the table. It's still loaded, so `group_by` / `aggregate` / sort can use it. Works for `tags` / `urls` too. |
 | `x-osm-list-join` | any string (default `", "`) | Separator between list items when a field holds a list (e.g. multiple visit dates). |
 | `x-osm-list-sort` | `min` / `max` / `first` / `last` | Sets the cell's `data-sort-value` so column sorting picks one canonical key. `max` = most-recent visit drives the sort. |
+| `x-osm-list-i18n` | `{ title: { <lang>: <string> } }` | Per-language overrides for `title`. Looked up by the article's `Lang` (or `DEFAULT_LANG`) — full match first (`zh-tw`), then primary subtag (`zh`). Falls through to `title` when nothing matches. |
 
-Precedence for column labels: `schema.title` → `OSM_LIST_FIELD_LABELS` → auto-derived from key.
+```yaml
+hall:
+  type: string
+  title: 影廳                    # ← default-locale fallback
+  x-osm-list-i18n:
+    title:
+      en: Hall
+      ja: スクリーン
+```
+
+Precedence for column labels: `x-osm-list-i18n.title.<lang>` → `schema.title` → `OSM_LIST_FIELD_LABELS` → auto-derived from key.
 
 `x-` prefixed keys are JSON Schema's standard extension namespace, so validators ignore them silently. Scalar values render unchanged — `datetime.date` becomes ISO string, lists are joined per `x-osm-list-join`.
 

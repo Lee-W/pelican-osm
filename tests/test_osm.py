@@ -37,6 +37,8 @@ from pelican.plugins.osm.osm import (
     _process_content,
     _render_place_html,
     _render_place_list_html,
+    _resolve_i18n_title,
+    _resolve_schema_properties,
     _validate_place,
     _validate_yaml_files,
     _yaml_to_geojson,
@@ -2189,3 +2191,192 @@ class TestValidateYamlFiles:
             _validate_yaml_files(root, {})
 
         assert any("invalid schema" in r.message for r in caplog.records)
+
+
+class TestResolveSchemaProperties:
+    """Schema property resolution must reach into all three loader shapes,
+    not just the canonical place dict with nested ``items``."""
+
+    def _setup(self, tmp_path: Path, yaml_name: str, schema: dict) -> Path:
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_schema.yaml").write_text(yaml.dump(schema), encoding="utf-8")
+        (root / yaml_name).write_text("name: A\nlat: 1\nlon: 2\n", encoding="utf-8")
+        return root
+
+    def test_locations_based_schema_extracts_per_place_props(self, tmp_path):
+        # Pilgrimage shape: {properties: {locations: {items: {properties: ...}}}}
+        schema = {
+            "type": "object",
+            "properties": {
+                "anime": {"type": "string", "title": "作品"},
+                "locations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "category": {
+                                "type": "string",
+                                "title": "分類",
+                                "x-osm-list-hidden": True,
+                            },
+                            "date": {
+                                "type": "string",
+                                "x-osm-list-sort": "max",
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        root = self._setup(tmp_path, "foo.yaml", schema)
+        resolver = PlaceResolver(root)
+        merged = _resolve_schema_properties(["foo.yaml"], resolver, {})
+
+        assert merged["category"]["title"] == "分類"
+        assert merged["category"]["x-osm-list-hidden"] is True
+        assert merged["date"]["x-osm-list-sort"] == "max"
+        assert merged["anime"]["title"] == "作品"
+
+    def test_dict_of_places_schema_extracts_per_place_props(self, tmp_path):
+        # Theater shape: {additionalProperties: {properties: ..., items: {items: {...}}}}
+        schema = {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "title": "影城"},
+                    "address": {
+                        "type": "string",
+                        "x-osm-list-hidden": True,
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "hall": {"type": "string", "title": "影廳"},
+                                "alt_rows": {
+                                    "type": "string",
+                                    "x-osm-list-hidden": True,
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        root = self._setup(tmp_path, "bar.yaml", schema)
+        resolver = PlaceResolver(root)
+        merged = _resolve_schema_properties(["bar.yaml"], resolver, {})
+
+        assert merged["name"]["title"] == "影城"
+        assert merged["address"]["x-osm-list-hidden"] is True
+        assert merged["hall"]["title"] == "影廳"
+        assert merged["alt_rows"]["x-osm-list-hidden"] is True
+
+    def test_inner_props_win_over_outer_on_collision(self, tmp_path):
+        # Item-level entries should override parent-level entries with the
+        # same name, matching _expand_items row-merge precedence.
+        schema = {
+            "type": "object",
+            "properties": {
+                "tags": {"type": "array", "title": "FILE TAGS"},
+                "locations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tags": {"type": "array", "title": "PLACE TAGS"},
+                        },
+                    },
+                },
+            },
+        }
+        root = self._setup(tmp_path, "foo.yaml", schema)
+        resolver = PlaceResolver(root)
+        merged = _resolve_schema_properties(["foo.yaml"], resolver, {})
+
+        assert merged["tags"]["title"] == "PLACE TAGS"
+
+
+class TestResolveI18nTitle:
+    def test_returns_full_lang_match(self):
+        props = {"x-osm-list-i18n": {"title": {"en": "Hall", "ja": "スクリーン"}}}
+        assert _resolve_i18n_title(props, "en") == "Hall"
+        assert _resolve_i18n_title(props, "ja") == "スクリーン"
+
+    def test_falls_back_to_primary_subtag(self):
+        # Schema has only primary "zh"; lookup with "zh-tw" should match.
+        props = {"x-osm-list-i18n": {"title": {"zh": "影廳"}}}
+        assert _resolve_i18n_title(props, "zh-tw") == "影廳"
+
+    def test_full_match_wins_over_primary_subtag(self):
+        props = {"x-osm-list-i18n": {"title": {"zh": "影廳", "zh-tw": "影廳-TW"}}}
+        assert _resolve_i18n_title(props, "zh-tw") == "影廳-TW"
+
+    def test_case_insensitive_lookup(self):
+        props = {"x-osm-list-i18n": {"title": {"EN": "Hall"}}}
+        assert _resolve_i18n_title(props, "en") == "Hall"
+
+    def test_no_match_returns_none(self):
+        props = {"x-osm-list-i18n": {"title": {"en": "Hall"}}}
+        assert _resolve_i18n_title(props, "fr") is None
+
+    def test_no_lang_returns_none(self):
+        props = {"x-osm-list-i18n": {"title": {"en": "Hall"}}}
+        assert _resolve_i18n_title(props, None) is None
+
+    def test_no_i18n_block_returns_none(self):
+        assert _resolve_i18n_title({"title": "Hall"}, "en") is None
+
+
+class TestRenderPlaceListI18nColumnHeader:
+    def test_lang_match_overrides_title(self):
+        places = [{"name": "A", "lat": 1, "lon": 2, "category": "park"}]
+        html = _render_place_list_html(
+            places,
+            ["category"],
+            {},
+            field_schema={
+                "category": {
+                    "title": "分類",
+                    "x-osm-list-i18n": {"title": {"en": "Category"}},
+                }
+            },
+            lang="en",
+        )
+        assert "<th>Category</th>" in html
+        assert "<th>分類</th>" not in html
+
+    def test_no_lang_match_falls_back_to_title(self):
+        places = [{"name": "A", "lat": 1, "lon": 2, "category": "park"}]
+        html = _render_place_list_html(
+            places,
+            ["category"],
+            {},
+            field_schema={
+                "category": {
+                    "title": "分類",
+                    "x-osm-list-i18n": {"title": {"en": "Category"}},
+                }
+            },
+            lang="ja",
+        )
+        assert "<th>分類</th>" in html
+
+    def test_primary_subtag_match(self):
+        places = [{"name": "A", "lat": 1, "lon": 2, "category": "park"}]
+        html = _render_place_list_html(
+            places,
+            ["category"],
+            {},
+            field_schema={
+                "category": {
+                    "title": "Category",
+                    "x-osm-list-i18n": {"title": {"zh": "分類"}},
+                }
+            },
+            lang="zh-tw",
+        )
+        assert "<th>分類</th>" in html
