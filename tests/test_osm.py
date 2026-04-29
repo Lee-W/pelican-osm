@@ -22,6 +22,7 @@ from pelican.plugins.osm.osm import (
     PlaceResolver,
     _aggregate_field,
     _collapse_places,
+    _expand_items,
     _export_geojson,
     _extract_year,
     _find_schema_for,
@@ -322,6 +323,331 @@ class TestMergePlace:
 
 
 # ---------------------------------------------------------------------------
+# _expand_items
+# ---------------------------------------------------------------------------
+
+
+class TestExpandItems:
+    def test_no_items_passes_through(self):
+        result = _expand_items([{"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP"}])
+        assert result == [{"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP"}]
+
+    def test_empty_items_drops_key(self):
+        result = _expand_items([{"name": "A", "lat": 1.0, "lon": 2.0, "items": []}])
+        assert result == [{"name": "A", "lat": 1.0, "lon": 2.0}]
+
+    def test_items_expand_inheriting_parent_fields(self):
+        result = _expand_items(
+            [
+                {
+                    "name": "T",
+                    "lat": 1.0,
+                    "lon": 2.0,
+                    "country": "TW",
+                    "items": [
+                        {"hall": "Hall 1", "rows": "G"},
+                        {"hall": "Hall 2", "rows": "E"},
+                    ],
+                }
+            ]
+        )
+        assert len(result) == 2
+        assert result[0]["hall"] == "Hall 1"
+        assert result[0]["name"] == "T"
+        assert result[0]["lat"] == 1.0
+        assert result[0]["country"] == "TW"
+        assert result[0]["rows"] == "G"
+        assert result[1]["hall"] == "Hall 2"
+        assert result[1]["country"] == "TW"
+        assert result[1]["rows"] == "E"
+        assert "items" not in result[0]
+
+    def test_item_field_overrides_non_protected_parent_field(self):
+        # Item-level fields win on collision for everything except the
+        # parent-only set (name/lat/lon).
+        result = _expand_items(
+            [
+                {
+                    "name": "P",
+                    "lat": 1.0,
+                    "lon": 2.0,
+                    "note": "parent",
+                    "items": [{"hall": "H", "note": "child"}],
+                }
+            ]
+        )
+        assert result[0]["note"] == "child"
+
+    def test_item_name_is_dropped(self, caplog):
+        # Items are sub-rows of one place; ``name`` belongs to the parent.
+        # A name on an item is dropped (parent wins) and a warning is logged.
+        with caplog.at_level("WARNING"):
+            result = _expand_items(
+                [
+                    {
+                        "name": "Parent",
+                        "lat": 1.0,
+                        "lon": 2.0,
+                        "items": [{"name": "Child", "hall": "H"}],
+                    }
+                ]
+            )
+        assert result[0]["name"] == "Parent"
+        assert result[0]["hall"] == "H"
+        assert any("'name'" in rec.message for rec in caplog.records)
+
+    def test_item_lat_lon_are_dropped(self, caplog):
+        with caplog.at_level("WARNING"):
+            result = _expand_items(
+                [
+                    {
+                        "name": "Parent",
+                        "lat": 1.0,
+                        "lon": 2.0,
+                        "items": [{"hall": "H", "lat": 99.0, "lon": 88.0}],
+                    }
+                ]
+            )
+        assert result[0]["lat"] == 1.0
+        assert result[0]["lon"] == 2.0
+        msgs = " ".join(rec.message for rec in caplog.records)
+        assert "'lat'" in msgs
+        assert "'lon'" in msgs
+
+    def test_tags_union_parent_then_item(self):
+        result = _expand_items(
+            [
+                {
+                    "name": "P",
+                    "lat": 1.0,
+                    "lon": 2.0,
+                    "tags": ["theater"],
+                    "items": [{"hall": "H1", "tags": ["imax"]}],
+                }
+            ]
+        )
+        assert result[0]["tags"] == ["theater", "imax"]
+
+    def test_non_dict_items_skipped(self):
+        result = _expand_items(
+            [
+                {
+                    "name": "P",
+                    "lat": 1.0,
+                    "lon": 2.0,
+                    "items": ["not a dict", {"hall": "H1"}, 42],
+                }
+            ]
+        )
+        assert len(result) == 1
+        assert result[0]["hall"] == "H1"
+
+    def test_mixed_with_and_without_items(self):
+        result = _expand_items(
+            [
+                {"name": "Solo", "lat": 1.0, "lon": 2.0},
+                {
+                    "name": "Group",
+                    "lat": 3.0,
+                    "lon": 4.0,
+                    "items": [{"hall": "G1"}, {"hall": "G2"}],
+                },
+            ]
+        )
+        # Parent's name flows to every expanded row; items add ``hall``.
+        assert [p["name"] for p in result] == ["Solo", "Group", "Group"]
+        assert [p.get("hall") for p in result] == [None, "G1", "G2"]
+        assert result[1]["lat"] == 3.0
+        assert result[2]["lat"] == 3.0
+
+
+# ---------------------------------------------------------------------------
+# _render_place_list_html with items
+# ---------------------------------------------------------------------------
+
+
+class TestRenderPlaceListHtmlItems:
+    def test_items_render_as_separate_rows(self):
+        places = [
+            {
+                "name": "松仁威秀",
+                "lat": 25.03,
+                "lon": 121.56,
+                "country": "TW",
+                "items": [
+                    {"hall": "6 廳（TITAN）", "rows": "G"},
+                    {"hall": "2 廳", "rows": "E"},
+                ],
+            }
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert html.count("<tr>") == 3  # 2 rows + 1 header
+        assert "6 廳（TITAN）" in html
+        assert "2 廳" in html
+        # Parent's name cascades to every row (one row per item).
+        assert html.count("松仁威秀") == 4  # data-sort-value and column value
+
+    def test_group_summary_at_with_parent_field(self):
+        places = [
+            {
+                "name": "T1",
+                "country": "TW",
+                "lat": 1.0,
+                "lon": 2.0,
+                "items": [{"hall": "H1"}, {"hall": "H2"}],
+            },
+            {
+                "name": "T2",
+                "country": "JP",
+                "lat": 3.0,
+                "lon": 4.0,
+                "items": [{"hall": "H3"}],
+            },
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_by=["country", "name", "hall"],
+            group_summary_at=["country"],
+        )
+        assert "TW" in html
+        assert "JP" in html
+        assert html.count("<tr>") == 4
+
+    def test_items_field_not_a_column(self):
+        places = [
+            {
+                "name": "T",
+                "lat": 1.0,
+                "lon": 2.0,
+                "items": [{"hall": "H1", "rows": "G"}],
+            }
+        ]
+        html = _render_place_list_html(places, [], {})
+        # The 'items' key should not appear as a column header
+        assert "<th>Items</th>" not in html
+
+    def test_items_not_merged_when_group_by_matches_parent_only(self):
+        # Regression: with group_by="country,name" (parent's identifying
+        # fields) and *no* aggregate, items of one parent share the same
+        # group-key tuple. They must still render as separate rows — auto
+        # SQL-style collapse here would silently destroy per-hall data.
+        places = [
+            {
+                "name": "T1",
+                "lat": 1.0,
+                "lon": 2.0,
+                "country": "TW",
+                "items": [
+                    {"hall": "H1", "rows": "G"},
+                    {"hall": "H2", "rows": "E"},
+                    {"hall": "H3", "rows": "F"},
+                ],
+            }
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_by=["country", "name"],
+            group_summary_at=["country", "name"],
+        )
+        tbody = re.search(r"<tbody>(.*?)</tbody>", html, re.DOTALL).group(1)
+        # Three data rows (H1/H2/H3); group headers don't live inside <tr>
+        # without class — strip those out by counting only data <tr>.
+        data_rows = [
+            line for line in tbody.split("<tr") if "osm-group-header" not in line
+        ]
+        # First split chunk is empty preamble, so subtract 1.
+        assert len(data_rows) - 1 == 3
+        assert "H1" in html
+        assert "H2" in html
+        assert "H3" in html
+
+    def test_name_in_summary_drops_name_column(self):
+        # When name is hoisted into group_summary_at, the data rows no
+        # longer carry a Name column — each row is identified by its
+        # item-specific field (e.g. ``hall``).
+        places = [
+            {
+                "name": "T1",
+                "lat": 1.0,
+                "lon": 2.0,
+                "country": "TW",
+                "items": [{"hall": "H1"}, {"hall": "H2"}],
+            }
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_by=["country", "name"],
+            group_summary_at=["country", "name"],
+        )
+        thead = re.search(r"<thead>(.*?)</thead>", html, re.DOTALL).group(1)
+        assert "<th>Name</th>" not in thead
+        # Hall column is still present
+        assert ">Hall<" in thead
+
+    def test_name_summary_header_includes_map_links(self):
+        # When name is the summary field at a depth, the header for that
+        # depth carries the place's 🗺️·📍 map links (same span structure
+        # used in data-row name cells).
+        places = [
+            {
+                "name": "T1",
+                "lat": 25.03,
+                "lon": 121.56,
+                "country": "TW",
+                "items": [{"hall": "H1"}],
+            }
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            group_by=["country", "name"],
+            group_summary_at=["country", "name"],
+        )
+        # Find the depth-1 header (where name lives) and verify it carries
+        # the map-links span. The depth-0 header (country) must NOT have it.
+        depth1 = re.search(
+            r'<tr class="osm-group-header osm-group-header--depth-1"[^>]*>(.*?)</tr>',
+            html,
+        )
+        depth0 = re.search(
+            r'<tr class="osm-group-header osm-group-header--depth-0"[^>]*>(.*?)</tr>',
+            html,
+        )
+        assert depth1 is not None and depth0 is not None
+        assert "osm-list-map-links" in depth1.group(1)
+        assert "mlat=25.03" in depth1.group(1)
+        assert "osm-list-map-links" not in depth0.group(1)
+
+
+# ---------------------------------------------------------------------------
+# _place_to_feature with items
+# ---------------------------------------------------------------------------
+
+
+class TestPlaceToFeatureItems:
+    def test_items_stripped_from_geojson_properties(self):
+        feat = _place_to_feature(
+            {
+                "name": "T",
+                "lat": 1.0,
+                "lon": 2.0,
+                "country": "TW",
+                "items": [{"hall": "H1"}, {"hall": "H2"}],
+            }
+        )
+        assert "items" not in feat["properties"]
+        assert feat["properties"]["name"] == "T"
+        assert feat["properties"]["country"] == "TW"
+
+
+# ---------------------------------------------------------------------------
 # _parse_shortcode_args
 # ---------------------------------------------------------------------------
 
@@ -493,31 +819,82 @@ class TestAggregateField:
 
 
 class TestCollapsePlaces:
-    def test_single_field_collapses_matching_places(self):
+    # Without aggregate: rows are preserved, just bucketed for tree rendering.
+
+    def test_no_aggregate_preserves_every_row(self):
         places = [
             {"name": "A", "anime": "X"},
             {"name": "B", "anime": "X"},
             {"name": "C", "anime": "Y"},
         ]
         rows = _collapse_places(places, ["anime"], {})
-        assert len(rows) == 2
-        assert rows[0]["anime"] == "X"
-        assert len(rows[0]["_places"]) == 2
-        assert rows[1]["anime"] == "Y"
-        assert len(rows[1]["_places"]) == 1
+        assert len(rows) == 3
+        assert all(len(r["_places"]) == 1 for r in rows)
+        assert [r["name"] for r in rows] == ["A", "B", "C"]
 
-    def test_multi_field_collapses_by_tuple(self):
+    def test_no_aggregate_buckets_interleaved_keys_into_contiguous_runs(self):
+        # Z first appears at index 0, X at index 1; Z's bucket emits first
+        # (with both Z rows contiguous in original order), then X.
+        places = [
+            {"name": "A", "anime": "Z"},
+            {"name": "B", "anime": "X"},
+            {"name": "C", "anime": "Z"},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert [r["name"] for r in rows] == ["A", "C", "B"]
+
+    def test_no_aggregate_keeps_per_row_field_values(self):
+        # First-non-empty merging only applies when aggregating; without it,
+        # every row keeps its own values verbatim.
+        places = [
+            {"name": "A", "anime": "X", "category": ""},
+            {"name": "B", "anime": "X", "category": "商店街"},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert [r["category"] for r in rows] == ["", "商店街"]
+
+    def test_no_aggregate_does_not_union_tags(self):
+        places = [
+            {"name": "A", "anime": "X", "tags": ["動畫"]},
+            {"name": "B", "anime": "X", "tags": ["已歇業"]},
+        ]
+        rows = _collapse_places(places, ["anime"], {})
+        assert [r["tags"] for r in rows] == [["動畫"], ["已歇業"]]
+
+    def test_no_aggregate_multi_field_buckets_by_tuple(self):
         places = [
             {"name": "A", "anime": "X", "city": "K"},
             {"name": "B", "anime": "X", "city": "T"},
             {"name": "C", "anime": "X", "city": "K"},
         ]
         rows = _collapse_places(places, ["anime", "city"], {})
+        assert [r["name"] for r in rows] == ["A", "C", "B"]
+
+    # With aggregate: SQL-style collapse + merge.
+
+    def test_aggregate_collapses_into_one_row_per_key(self):
+        places = [
+            {"name": "A", "anime": "X", "date": "2018-05-01"},
+            {"name": "B", "anime": "X", "date": "2023-06-01"},
+            {"name": "C", "anime": "Y", "date": "2024-01-01"},
+        ]
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
+        assert len(rows) == 2
+        x_row = next(r for r in rows if r["anime"] == "X")
+        assert len(x_row["_places"]) == 2
+
+    def test_aggregate_multi_field_collapses_by_tuple(self):
+        places = [
+            {"name": "A", "anime": "X", "city": "K", "date": "2018"},
+            {"name": "B", "anime": "X", "city": "T", "date": "2019"},
+            {"name": "C", "anime": "X", "city": "K", "date": "2020"},
+        ]
+        rows = _collapse_places(places, ["anime", "city"], {"date": "year"})
         assert len(rows) == 2
         k_row = next(r for r in rows if r["city"] == "K")
         assert len(k_row["_places"]) == 2
 
-    def test_year_aggregate_collapses_dates(self):
+    def test_aggregate_year_collapses_dates(self):
         places = [
             {"name": "A", "anime": "X", "date": "2018-05-01"},
             {"name": "B", "anime": "X", "date": "2023-06-01"},
@@ -526,7 +903,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["date"] == "2018, 2023"
 
-    def test_year_aggregate_with_all_missing_dates_yields_empty(self):
+    def test_aggregate_year_with_all_missing_dates_yields_empty(self):
         places = [
             {"name": "A", "anime": "X", "date": ""},
             {"name": "B", "anime": "X"},
@@ -534,29 +911,29 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["date"] == ""
 
-    def test_tags_unioned_across_group(self):
+    def test_aggregate_unions_tags_across_group(self):
         places = [
-            {"name": "A", "anime": "X", "tags": ["動畫"]},
-            {"name": "B", "anime": "X", "tags": ["已歇業"]},
+            {"name": "A", "anime": "X", "date": "2018", "tags": ["動畫"]},
+            {"name": "B", "anime": "X", "date": "2019", "tags": ["已歇業"]},
         ]
-        rows = _collapse_places(places, ["anime"], {})
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["tags"] == ["動畫", "已歇業"]
 
-    def test_first_non_empty_wins_for_other_fields(self):
+    def test_aggregate_first_non_empty_wins_for_non_aggregate_fields(self):
         places = [
-            {"name": "A", "anime": "X", "category": ""},
-            {"name": "B", "anime": "X", "category": "商店街"},
+            {"name": "A", "anime": "X", "date": "2018", "category": ""},
+            {"name": "B", "anime": "X", "date": "2019", "category": "商店街"},
         ]
-        rows = _collapse_places(places, ["anime"], {})
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["category"] == "商店街"
 
-    def test_order_preserves_first_appearance(self):
+    def test_aggregate_order_preserves_first_appearance_of_keys(self):
         places = [
-            {"name": "A", "anime": "Z"},
-            {"name": "B", "anime": "X"},
-            {"name": "C", "anime": "Z"},
+            {"name": "A", "anime": "Z", "date": "2018"},
+            {"name": "B", "anime": "X", "date": "2019"},
+            {"name": "C", "anime": "Z", "date": "2020"},
         ]
-        rows = _collapse_places(places, ["anime"], {})
+        rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert [r["anime"] for r in rows] == ["Z", "X"]
 
     def test_aggregate_field_not_overwritten_by_first_non_empty(self):
@@ -932,6 +1309,82 @@ class TestRenderPlaceListHtml:
         thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>Visited</th>" in thead
 
+    def test_hidden_field_excluded_from_auto_detected_columns(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "internal": "x"},
+        ]
+        html = _render_place_list_html(
+            places,
+            [],  # auto-detect
+            {},
+            field_schema={"internal": {"x-osm-list-hidden": True}},
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "internal" not in thead.lower()
+        assert "city" in thead.lower() or "City" in thead
+
+    def test_hidden_field_excluded_from_explicit_fields(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "internal": "x"},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["city", "internal"],
+            {},
+            field_schema={"internal": {"x-osm-list-hidden": True}},
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "internal" not in thead.lower()
+
+    def test_hidden_field_still_usable_for_group_by(self):
+        # Hidden fields stay in the data so group_by/sort/aggregate still work.
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X", "internal_order": 1},
+            {"name": "B", "lat": 1.0, "lon": 2.0, "anime": "X", "internal_order": 2},
+        ]
+        html = _render_place_list_html(
+            places,
+            ["anime"],
+            {},
+            group_by=["anime"],
+            group_summary_at=["anime"],
+            field_schema={"internal_order": {"x-osm-list-hidden": True}},
+        )
+        # Group header still emits, fields rendered, hidden field absent.
+        assert "osm-group-header" in html
+        assert "internal_order" not in html
+
+    def test_hidden_tags_drops_tags_column(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "tags": ["x"]},
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            field_schema={"tags": {"x-osm-list-hidden": True}},
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "<th>Tags</th>" not in thead
+
+    def test_hidden_urls_drops_links_column(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "urls": [{"href": "https://example.com"}],
+            },
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            field_schema={"urls": {"x-osm-list-hidden": True}},
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "<th>Links</th>" not in thead
+
     def test_schema_title_applies_to_reserved_columns(self):
         # name / tags / urls are special-cased columns but should still honor
         # schema title so the whole header row can be translated from one place.
@@ -1290,16 +1743,16 @@ class TestProcessContent:
 
     # ── place_list grouping/aggregation kwargs ────────────────────────────
 
-    def test_place_list_group_by_collapses_in_html(self, resolver):
-        # Directory shortcode loads both mygo and tamako; group_by="anime"
-        # collapses each file's places to one row.
+    def test_place_list_group_by_no_aggregate_preserves_rows(self, resolver):
+        # Directory shortcode loads mygo (1 place) and tamako (2 places).
+        # group_by without aggregate buckets but does NOT merge: all 3 rows
+        # survive, just contiguous per anime.
         content = '{% place_list japan group_by="anime" %}'
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "osm-place-list" in result
-        # tbody contains exactly two data rows (no group_summary_at)
         tbody = re.search(r"<tbody>(.*?)</tbody>", result, re.DOTALL)
         assert tbody is not None
-        assert tbody.group(1).count("<tr>") == 2
+        assert tbody.group(1).count("<tr>") == 3
 
     def test_place_list_group_summary_emits_header(self, resolver):
         content = '{% place_list japan group_by="anime" group_summary_at="anime" %}'
