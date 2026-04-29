@@ -37,6 +37,7 @@ from pelican.plugins.osm.osm import (
     _process_content,
     _render_place_html,
     _render_place_list_html,
+    _resolve_group_count_template,
     _resolve_i18n_title,
     _resolve_schema_properties,
     _validate_place,
@@ -2329,6 +2330,37 @@ class TestResolveI18nTitle:
 
     def test_no_i18n_block_returns_none(self):
         assert _resolve_i18n_title({"title": "Hall"}, "en") is None
+
+
+class TestResolveGroupCountTemplate:
+    def test_explicit_setting_wins(self):
+        out = _resolve_group_count_template(
+            {"OSM_LIST_GROUP_COUNT_TEMPLATE": "{n} spots"}, "zh-tw"
+        )
+        assert out == "{n} spots"
+
+    def test_explicit_empty_string_wins_to_suppress(self):
+        # Setting to "" is the documented way to suppress the count line —
+        # built-in lang defaults must not override that intent.
+        out = _resolve_group_count_template(
+            {"OSM_LIST_GROUP_COUNT_TEMPLATE": ""}, "zh-tw"
+        )
+        assert out == ""
+
+    def test_zh_tw_uses_zh_builtin(self):
+        assert _resolve_group_count_template({}, "zh-tw") == "{n} 個地點"
+
+    def test_zh_uses_zh_builtin(self):
+        assert _resolve_group_count_template({}, "zh") == "{n} 個地點"
+
+    def test_ja_uses_ja_builtin(self):
+        assert _resolve_group_count_template({}, "ja") == "{n} 件"
+
+    def test_unknown_lang_falls_back_to_english(self):
+        assert _resolve_group_count_template({}, "fr") == "{n} places"
+
+    def test_no_lang_falls_back_to_english(self):
+        assert _resolve_group_count_template({}, None) == "{n} places"
 
 
 class TestRenderPlaceListI18nColumnHeader:
