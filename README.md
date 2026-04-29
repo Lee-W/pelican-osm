@@ -346,6 +346,7 @@ The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/
 | `OSM_LIST_GROUP_COUNT_TEMPLATE` | auto-detected from `Lang` / `DEFAULT_LANG` | Format string for the per-group subtotal under `group_summary_at` headers. `{n}` is the place count. Built-in defaults: `"{n} 個地點"` (`zh*`), `"{n} 件"` (`ja*`), `"{n} places"` (other). Set to `""` to omit, or to any string to override. |
 | `OSM_VALIDATE_SCHEMA_FILENAMES` | `["_schema.yaml", "_schema.yml", "_schema.json"]` | Filenames the validator looks for. Accepts a string or list. |
 | `OSM_VALIDATE_STRICT` | `False` | Raise `RuntimeError` on validation failure instead of just logging warnings. |
+| `OSM_DISABLE_MARKDOWN_PROTECTION` | `False` | Disable the Markdown preprocessor that shields `{% ... %}` shortcodes from the `attr_list` extension. Only set this if you have a conflicting extension at preprocessor priority 25 — without protection, two shortcodes on adjacent lines can be silently mangled by `attr_list` (bundled with `markdown.extensions.extra`). |
 
 ## Schema validation
 

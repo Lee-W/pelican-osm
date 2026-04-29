@@ -35,11 +35,13 @@ from pelican.plugins.osm.osm import (
     _parse_shortcode_args,
     _place_to_feature,
     _process_content,
+    _register_markdown_extension,
     _render_place_html,
     _render_place_list_html,
     _resolve_group_count_template,
     _resolve_i18n_title,
     _resolve_schema_properties,
+    _ShortcodePreserveExtension,
     _validate_place,
     _validate_yaml_files,
     _yaml_to_geojson,
@@ -2412,3 +2414,146 @@ class TestRenderPlaceListI18nColumnHeader:
             lang="zh-tw",
         )
         assert "<th>分類</th>" in html
+
+
+# ---------------------------------------------------------------------------
+# Markdown extension: protects {% ... %} from attr_list mangling
+# ---------------------------------------------------------------------------
+
+
+class TestShortcodePreserveExtension:
+    """Verify that the Markdown extension keeps shortcode text intact through
+    a full Markdown conversion — including with ``markdown.extensions.extra``
+    enabled, which is what bites users in practice (it bundles ``attr_list``).
+    """
+
+    def _convert(self, source: str, *, with_extra: bool = True) -> str:
+        import markdown
+
+        extensions: list = [_ShortcodePreserveExtension(["place", "place_list"])]
+        if with_extra:
+            extensions.append("markdown.extensions.extra")
+        md = markdown.Markdown(extensions=extensions, output_format="html")
+        return md.convert(source)
+
+    def test_shortcode_survives_attr_list(self):
+        # Two adjacent shortcodes (no blank line) used to get the second
+        # consumed by attr_list as paragraph attributes.
+        source = "{% place_list theaters/japan.yaml %}\n{% place theaters/japan.yaml %}"
+        out = self._convert(source)
+        assert "{% place_list theaters/japan.yaml %}" in out
+        assert "{% place theaters/japan.yaml %}" in out
+        # No attr_list-style attributes leaked onto a paragraph
+        assert 'place=""' not in out
+        assert "theaters=" not in out
+
+    def test_shortcode_after_heading_no_blank_line(self):
+        # Heading immediately followed by a shortcode line previously got
+        # the whole block wrapped in HTML comments. Verify the shortcode
+        # text comes through verbatim.
+        source = (
+            "## 日本 / Japan\n"
+            "{% place_list theaters/japan.yaml %}\n"
+            "{% place theaters/japan.yaml %}"
+        )
+        out = self._convert(source)
+        assert "{% place_list theaters/japan.yaml %}" in out
+        assert "{% place theaters/japan.yaml %}" in out
+        # No HTML-comment wrapping of plugin output
+        assert "<!--" not in out
+
+    def test_shortcode_with_kwargs_preserved(self):
+        source = (
+            "{% place_list theaters/japan.yaml "
+            'group_by="country,city" group_summary_at="country" %}'
+        )
+        out = self._convert(source)
+        assert (
+            "{% place_list theaters/japan.yaml "
+            'group_by="country,city" group_summary_at="country" %}'
+        ) in out
+
+    def test_works_without_extra(self):
+        # Sanity: even without the troublesome extension, the shortcode
+        # should still pass through unchanged (no double-substitution etc.).
+        source = "{% place taiwan.yaml %}"
+        out = self._convert(source, with_extra=False)
+        assert "{% place taiwan.yaml %}" in out
+
+    def test_custom_shortcode_names(self):
+        import markdown
+
+        ext = _ShortcodePreserveExtension(["map", "map_list"])
+        md = markdown.Markdown(
+            extensions=[ext, "markdown.extensions.extra"],
+            output_format="html",
+        )
+        # Custom names protected
+        out = md.convert("{% map foo.yaml %}\n{% map bar.yaml %}")
+        assert "{% map foo.yaml %}" in out
+        assert "{% map bar.yaml %}" in out
+
+    def test_non_matching_braces_untouched(self):
+        # Real attr_list usage on a non-shortcode element should still work,
+        # i.e. our extension must not be too greedy.
+        source = "A paragraph with attrs.\n{: .my-class }"
+        out = self._convert(source)
+        assert 'class="my-class"' in out
+
+    def test_empty_shortcodes_rejected(self):
+        with pytest.raises(ValueError):
+            _ShortcodePreserveExtension([])
+
+
+class TestRegisterMarkdownExtension:
+    def test_appends_extension(self):
+        settings: dict = {}
+        _register_markdown_extension(settings)
+        exts = settings["MARKDOWN"]["extensions"]
+        assert any(isinstance(e, _ShortcodePreserveExtension) for e in exts)
+
+    def test_idempotent(self):
+        # i18n_subsites and similar plugins re-fire `initialized`. Repeat
+        # calls must not stack copies of the extension.
+        settings: dict = {}
+        _register_markdown_extension(settings)
+        _register_markdown_extension(settings)
+        exts = settings["MARKDOWN"]["extensions"]
+        assert sum(isinstance(e, _ShortcodePreserveExtension) for e in exts) == 1
+
+    def test_respects_opt_out(self):
+        settings: dict = {"OSM_DISABLE_MARKDOWN_PROTECTION": True}
+        _register_markdown_extension(settings)
+        # Either MARKDOWN is untouched, or extensions list has no preserver
+        exts = settings.get("MARKDOWN", {}).get("extensions", [])
+        assert not any(isinstance(e, _ShortcodePreserveExtension) for e in exts)
+
+    def test_uses_custom_shortcode_names(self):
+        # The extension's regex must match whatever the user configured.
+        import markdown
+
+        settings: dict = {
+            "OSM_SHORTCODE": "map",
+            "OSM_LIST_SHORTCODE": "map_list",
+        }
+        _register_markdown_extension(settings)
+        ext = next(
+            e
+            for e in settings["MARKDOWN"]["extensions"]
+            if isinstance(e, _ShortcodePreserveExtension)
+        )
+        md = markdown.Markdown(
+            extensions=[ext, "markdown.extensions.extra"],
+            output_format="html",
+        )
+        out = md.convert("{% map a.yaml %}\n{% map_list b.yaml %}")
+        assert "{% map a.yaml %}" in out
+        assert "{% map_list b.yaml %}" in out
+
+    def test_preserves_existing_extensions(self):
+        existing = ["markdown.extensions.extra"]
+        settings = {"MARKDOWN": {"extensions": list(existing)}}
+        _register_markdown_extension(settings)
+        exts = settings["MARKDOWN"]["extensions"]
+        assert "markdown.extensions.extra" in exts
+        assert any(isinstance(e, _ShortcodePreserveExtension) for e in exts)
