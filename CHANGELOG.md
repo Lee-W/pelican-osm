@@ -1,3 +1,9 @@
+## 0.9.0 (2026-04-29)
+
+### Feat
+
+- items syntax for parent/sub-row modeling
+
 ## 0.8.0 (2026-04-28)
 
 ### Feat
