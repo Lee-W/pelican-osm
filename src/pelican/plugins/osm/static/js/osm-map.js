@@ -712,14 +712,15 @@
   }
 
   function compareValues(a, b, dir) {
+    // Date (YYYY-MM-DD or similar) — checked before numeric so "2018-11-26"
+    // isn't truncated to 2018 by parseFloat
+    const aD = Date.parse(a),
+      bD = Date.parse(b);
+    if (!isNaN(aD) && !isNaN(bD)) return dir === "asc" ? aD - bD : bD - aD;
     // Numeric
     const aN = parseFloat(a),
       bN = parseFloat(b);
     if (!isNaN(aN) && !isNaN(bN)) return dir === "asc" ? aN - bN : bN - aN;
-    // Date (YYYY-MM-DD or similar)
-    const aD = Date.parse(a),
-      bD = Date.parse(b);
-    if (!isNaN(aD) && !isNaN(bD)) return dir === "asc" ? aD - bD : bD - aD;
     // String
     return dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
   }
