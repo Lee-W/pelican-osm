@@ -578,10 +578,12 @@
     const prevBtn = lightbox.querySelector(".osm-lightbox-prev");
     const nextBtn = lightbox.querySelector(".osm-lightbox-next");
     const overlay = lightbox.querySelector(".osm-lightbox-overlay");
+    const container = lightbox.querySelector(".osm-lightbox-container");
 
     function showLightbox(idx, images) {
       currentIdx = idx;
       currentImages = images;
+      lightboxImg.src = "";
       lightboxImg.src = images[idx];
       lightboxInfo.textContent = `${idx + 1} / ${images.length}`;
 
@@ -626,17 +628,21 @@
 
     closeBtn.addEventListener("click", hideLightbox);
     overlay.addEventListener("click", hideLightbox);
+    container.addEventListener("click", hideLightbox);
+    lightboxImg.addEventListener("click", (e) => e.stopPropagation());
 
     prevBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       goToImage(currentIdx - 1);
+      prevBtn.blur();
     });
 
     nextBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       goToImage(currentIdx + 1);
+      nextBtn.blur();
     });
 
     document.addEventListener(
@@ -702,6 +708,8 @@
       },
       true,
     ); // Use capture phase
+
+    return showLightbox;
   }
 
   // ── Sortable place-list tables ────────────────────────────────
@@ -942,7 +950,7 @@
     window.addEventListener("hashchange", expandToHash);
   }
 
-  function initSortableTables() {
+  function initSortableTables(showLightbox) {
     document.querySelectorAll(".osm-place-list").forEach((table) => {
       const tbody = table.querySelector("tbody");
       // Snapshot original row order for reset
@@ -954,6 +962,7 @@
       );
 
       table.querySelectorAll("thead th").forEach((th, colIdx) => {
+        if (th.classList.contains("osm-list-image-col-header")) return;
         th.setAttribute("data-sortable", "");
         th.style.cursor = "pointer";
         setSortIcon(th, null); // show ⇅ on every header from the start
@@ -978,6 +987,28 @@
 
       // Multi-level group_summary_at collapse
       initGroupCollapse(table);
+
+      // Image icon → lightbox
+      initImageRowExpand(table, showLightbox);
+    });
+  }
+
+  function initImageRowExpand(table, showLightbox) {
+    if (!showLightbox) return;
+    const tbody = table.querySelector("tbody");
+    if (!tbody) return;
+
+    tbody.addEventListener("click", (e) => {
+      const iconCell = e.target.closest("td.osm-list-image-icon");
+      if (!iconCell) return;
+      const row = iconCell.closest("tr.osm-has-images");
+      if (!row) return;
+      e.stopPropagation();
+
+      const images = JSON.parse(
+        row.dataset.images.replace(/&quot;/g, '"').replace(/&amp;/g, "&"),
+      );
+      showLightbox(0, images);
     });
   }
 
@@ -990,8 +1021,8 @@
   }
 
   function initAllMaps() {
-    setupPhotoLightbox();
-    initSortableTables();
+    const showLightbox = setupPhotoLightbox();
+    initSortableTables(showLightbox);
     initCaptionToggle();
 
     const mapEls = document.querySelectorAll(".osm-map");
