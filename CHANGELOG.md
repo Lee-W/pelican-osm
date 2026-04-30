@@ -1,3 +1,13 @@
+## 0.11.0 (2026-04-30)
+
+### Feat
+
+- image indicator column in place_list and multi-date support
+
+### Fix
+
+- date sorting
+
 ## 0.10.0 (2026-04-29)
 
 ### Feat
