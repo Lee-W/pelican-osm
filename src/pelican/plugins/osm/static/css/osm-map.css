@@ -791,6 +791,29 @@
   color: #bbb;
 }
 
+/* Image indicator column */
+.osm-list-image-col-header {
+  width: 1.6em;
+}
+
+.osm-list-image-icon {
+  text-align: center;
+  font-size: 0.9em;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.osm-place-list tr:hover .osm-list-image-icon {
+  opacity: 1;
+}
+
+.osm-list-image-icon:hover {
+  opacity: 1;
+}
+
 /* --------------------------------------------------------------------------
    Place list — group_summary_at header rows
    Inserted between data rows when group_summary_at is set. The <td> spans

@@ -211,7 +211,25 @@ def _extract_year(value: Any) -> int | None:
         return value if 1000 <= value <= 9999 else None
     if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
         return int(value[:4])
+    if isinstance(value, list):
+        for item in value:
+            year = _extract_year(item)
+            if year is not None:
+                return year
     return None
+
+
+def _extract_years(value: Any) -> list[int]:
+    """Extract all years from a date or list of dates."""
+    if isinstance(value, list):
+        years: list[int] = []
+        for item in value:
+            year = _extract_year(item)
+            if year is not None:
+                years.append(year)
+        return years
+    year = _extract_year(value)
+    return [year] if year is not None else []
 
 
 def _aggregate_field(op: str, field: str, places: list[dict[str, Any]]) -> Any:
@@ -220,19 +238,18 @@ def _aggregate_field(op: str, field: str, places: list[dict[str, Any]]) -> Any:
     Currently supports:
       * ``year`` — collect unique years from a date-like field, sorted
         ascending, comma-joined as a string. Returns ``""`` if no place has
-        a usable year.
+        a usable year. Supports list-valued date fields.
     """
     if op == "year":
-        years: list[int] = []
         seen: set[int] = set()
+        ordered: list[int] = []
         for p in places:
-            year = _extract_year(p.get(field))
-            if year is None or year in seen:
-                continue
-            seen.add(year)
-            years.append(year)
-        years.sort()
-        return ", ".join(str(y) for y in years)
+            for year in _extract_years(p.get(field)):
+                if year not in seen:
+                    seen.add(year)
+                    ordered.append(year)
+        ordered.sort()
+        return ", ".join(str(y) for y in ordered)
     log.warning("pelican-osm: unknown aggregate op %r for field %r", op, field)
     return ""
 
@@ -756,7 +773,9 @@ def _geojson_url(yaml_path: Path, root: Path, static_prefix: str) -> str:
     )
 
 
-def _resolve_image_url(image_path: str, siteurl: str, content_path: Path) -> str:
+def _resolve_image_url(
+    image_path: str, siteurl: str, content_path: Path | None = None
+) -> str:
     """Resolve image path to absolute URL.
 
     Supports:
@@ -925,6 +944,7 @@ def _render_place_list_html(
     group_count_template: str = DEFAULT_GROUP_COUNT_TEMPLATE,
     field_schema: dict[str, Any] | None = None,
     lang: str | None = None,
+    siteurl: str = "",
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -1072,8 +1092,32 @@ def _render_place_list_html(
             f"{render_map_links(place.get('lat'), place.get('lon'))}</td>"
         )
 
+    def _row_images_attr(row: dict[str, Any]) -> str:
+        """Return data-images attribute string + osm-has-images class for rows with images."""
+        raw = row.get("images")
+        if not raw:
+            return ""
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, list):
+            return ""
+        resolved = [
+            _resolve_image_url(str(img), siteurl, None)
+            for img in raw
+            if img is not None
+        ]
+        if not resolved:
+            return ""
+        escaped = (
+            json.dumps(resolved, ensure_ascii=False)
+            .replace("&", "&amp;")
+            .replace('"', "&quot;")
+        )
+        return f' class="osm-has-images" data-images="{escaped}"'
+
     has_tags = any(row.get("tags") for row in rows) and not is_hidden("tags")
     has_url = any(row.get("urls") for row in rows) and not is_hidden("urls")
+    has_images = any(row.get("images") for row in rows)
 
     # When ``name`` is in group_summary_at, it's hoisted into the summary
     # header (alongside its map links) and dropped from the data row column,
@@ -1089,6 +1133,8 @@ def _render_place_list_html(
     headers += [f"<th>{col_header(f)}</th>" for f in data_fields]
     if has_url:
         headers.append("<th>" + col_header("urls", "Links") + "</th>")
+    if has_images:
+        headers.append('<th class="osm-list-image-col-header">🖼</th>')
     col_count = len(headers)
 
     def render_value_cell(field: str, value: Any) -> str:
@@ -1117,7 +1163,13 @@ def _render_place_list_html(
             cells.append(render_value_cell(f, row.get(f, "")))
         if has_url:
             cells.append(f"<td>{render_urls(row.get('urls', []))}</td>")
-        return "<tr>" + "".join(cells) + "</tr>"
+        if has_images:
+            raw = row.get("images")
+            if raw:
+                cells.append('<td class="osm-list-image-icon">📷</td>')
+            else:
+                cells.append("<td></td>")
+        return f"<tr{_row_images_attr(row)}>" + "".join(cells) + "</tr>"
 
     rendered_rows: list[str] = []
     if group_summary_at:
@@ -1324,6 +1376,7 @@ def _process_content(
             group_count_template=group_count_template,
             field_schema=field_schema,
             lang=lang or settings.get("DEFAULT_LANG"),
+            siteurl=siteurl,
         )
 
     result = cast(str, list_pattern.sub(replace_list, result))
@@ -1581,6 +1634,13 @@ def _place_to_feature(
             continue
         if isinstance(v, (datetime.date, datetime.datetime)):
             v = v.isoformat()
+        elif isinstance(v, list):
+            v = [
+                item.isoformat()
+                if isinstance(item, (datetime.date, datetime.datetime))
+                else item
+                for item in v
+            ]
         properties[k] = v
 
     if "urls" in properties:

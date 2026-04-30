@@ -25,6 +25,7 @@ from pelican.plugins.osm.osm import (
     _expand_items,
     _export_geojson,
     _extract_year,
+    _extract_years,
     _find_schema_for,
     _geojson_url,
     _is_place_yaml,
@@ -787,6 +788,42 @@ class TestExtractYear:
     def test_garbage_string(self):
         assert _extract_year("foo") is None
 
+    def test_list_returns_first_year(self):
+        assert _extract_year(["2024-05-01", "2025-03-10"]) == 2024
+
+    def test_list_skips_non_dates(self):
+        assert _extract_year(["foo", "2025-01-01"]) == 2025
+
+    def test_empty_list(self):
+        assert _extract_year([]) is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_years
+# ---------------------------------------------------------------------------
+
+
+class TestExtractYears:
+    def test_single_date(self):
+        assert _extract_years("2024-05-01") == [2024]
+
+    def test_list_of_dates(self):
+        assert _extract_years(["2024-05-01", "2025-03-10"]) == [2024, 2025]
+
+    def test_list_with_date_objects(self):
+        assert _extract_years(
+            [datetime.date(2024, 5, 1), datetime.date(2025, 3, 10)]
+        ) == [2024, 2025]
+
+    def test_list_skips_non_dates(self):
+        assert _extract_years(["foo", "2025-01-01"]) == [2025]
+
+    def test_none(self):
+        assert _extract_years(None) == []
+
+    def test_empty_list(self):
+        assert _extract_years([]) == []
+
 
 # ---------------------------------------------------------------------------
 # _aggregate_field
@@ -812,6 +849,20 @@ class TestAggregateField:
             {"date": "2025-01-01"},
         ]
         assert _aggregate_field("year", "date", places) == "2024, 2025"
+
+    def test_year_with_list_dates(self):
+        places = [
+            {"date": ["2018-05-01", "2019-03-10"]},
+            {"date": ["2023-06-01"]},
+        ]
+        assert _aggregate_field("year", "date", places) == "2018, 2019, 2023"
+
+    def test_year_mixed_single_and_list(self):
+        places = [
+            {"date": "2018-05-01"},
+            {"date": ["2019-03-10", "2020-11-01"]},
+        ]
+        assert _aggregate_field("year", "date", places) == "2018, 2019, 2020"
 
     def test_unknown_op_returns_empty(self):
         # Unknown ops are logged and produce empty string rather than raising
@@ -1417,6 +1468,50 @@ class TestRenderPlaceListHtml:
         assert "<th>標籤</th>" in thead
         assert "<th>連結</th>" in thead
 
+    def test_images_row_gets_data_images_attr_and_icon(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "images": ["https://example.com/a.jpg"],
+            },
+            {"name": "B", "lat": 1.0, "lon": 2.0},
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert "osm-has-images" in html
+        assert "data-images=" in html
+        assert "osm-list-image-icon" in html
+        assert "osm-list-image-col-header" in html
+
+    def test_images_no_indicator_without_images(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo"},
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert "osm-has-images" not in html
+        assert "osm-list-image-col-header" not in html
+
+    def test_images_resolves_relative_path_with_siteurl(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "images": ["images/photo.jpg"]},
+        ]
+        html = _render_place_list_html(places, [], {}, siteurl="https://example.com")
+        assert "https://example.com/images/photo.jpg" in html
+
+    def test_images_string_value_gets_icon(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "images": "https://example.com/a.jpg",
+            },
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert "osm-has-images" in html
+        assert "osm-list-image-icon" in html
+
 
 # ---------------------------------------------------------------------------
 # _validate_place
@@ -1877,6 +1972,22 @@ class TestYamlToGeojson:
         fc = _yaml_to_geojson(yml)
         assert len(fc["features"]) == 1
         assert fc["features"][0]["properties"]["name"] == "Valid"
+
+    def test_list_of_dates_serialized_to_strings(self, tmp_path):
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "locations:\n"
+            "  - name: A\n    lat: 1.0\n    lon: 2.0\n"
+            "    date:\n      - 2026-02-22\n      - 2026-03-15\n",
+            encoding="utf-8",
+        )
+        fc = _yaml_to_geojson(yml)
+        import json
+
+        # Must be JSON-serializable (no datetime.date objects)
+        serialized = json.dumps(fc)
+        assert "2026-02-22" in serialized
+        assert "2026-03-15" in serialized
 
 
 # ---------------------------------------------------------------------------
