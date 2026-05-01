@@ -664,6 +664,18 @@
     // Layer filtering (x-osm-map-layer field)
     setupMapLayerFilter(el, filterCtx);
 
+    // Scroll popup to top on open so name/info is visible before photos
+    map.on("popupopen", (e) => {
+      requestAnimationFrame(() => {
+        const popupEl = e.popup.getElement();
+        if (!popupEl) return;
+        const wrapper = popupEl.querySelector(".leaflet-popup-content-wrapper");
+        const content = popupEl.querySelector(".leaflet-popup-content");
+        if (wrapper) wrapper.scrollTop = 0;
+        if (content) content.scrollTop = 0;
+      });
+    });
+
     // Deep linking: open popup if URL hash matches a place id or name
     const hash = decodeURIComponent(window.location.hash.slice(1));
     if (hash) {
