@@ -1,3 +1,13 @@
+## 0.12.0 (2026-05-01)
+
+### Feat
+
+- add x-osm-map-layer annotation for per-layer map filtering
+
+### Fix
+
+- refine map layer filter UX and fix popup behaviour
+
 ## 0.11.0 (2026-04-30)
 
 ### Feat
