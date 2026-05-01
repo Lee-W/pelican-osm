@@ -1343,7 +1343,12 @@ def _process_content(
         )
 
         return _render_place_html(
-            geojson_entries, names, map_height, tile_url, attribution, images_dict,
+            geojson_entries,
+            names,
+            map_height,
+            tile_url,
+            attribution,
+            images_dict,
             layer_field,
         )
 

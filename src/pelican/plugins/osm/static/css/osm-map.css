@@ -416,9 +416,10 @@
   pointer-events: auto;
 }
 
-.osm-map-block--fullscreen .leaflet-popup-tip {
-  display: none;
-}
+.osm-map-block--fullscreen .leaflet-popup-tip-container { display: none !important; }
+.osm-map-block:fullscreen .leaflet-popup-tip-container { display: none !important; }
+.osm-map-block:-webkit-full-screen .leaflet-popup-tip-container { display: none !important; }
+.osm-map-block:-moz-full-screen .leaflet-popup-tip-container { display: none !important; }
 
 .osm-map-block--fullscreen .osm-fullscreen-btn {
   position: fixed;
