@@ -499,9 +499,7 @@
   transition: all 0.15s;
 }
 
-.osm-map-tag-chip:hover {
-  opacity: 0.7;
-}
+.osm-map-tag-chip:hover { opacity: 0.7; }
 
 .osm-map-tag-chip--active {
   background: var(--osm-links-anchor-color, #c0392b);
@@ -509,9 +507,79 @@
   opacity: 1;
 }
 
-.osm-map-tag-chip--active:hover {
-  opacity: 0.85;
+.osm-map-tag-chip--active:hover { opacity: 0.85; }
+
+/* --------------------------------------------------------------------------
+   Map layer filter bar (x-osm-map-layer field — select dropdown)
+   -------------------------------------------------------------------------- */
+.osm-map-layer-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.4em 0.8em;
+  background: var(--osm-caption-bg);
+  border-top: var(--osm-caption-border);
 }
+
+.osm-map-layer-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  font-size: var(--osm-badge-font-size);
+  font-weight: 600;
+  color: var(--osm-caption-color);
+  white-space: nowrap;
+}
+
+.osm-map-layer-select {
+  font-size: var(--osm-badge-font-size);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--osm-badge-layer-border, #93c5fd);
+  background: var(--osm-badge-layer-bg, #dbeafe);
+  color: var(--osm-badge-layer-color, #1e40af);
+  font-weight: 600;
+  cursor: pointer;
+  max-width: 220px;
+}
+
+.osm-map-layer-clear {
+  font-size: var(--osm-badge-font-size);
+  padding: var(--osm-badge-padding);
+  border-radius: var(--osm-badge-radius);
+  border: 1px solid var(--osm-badge-layer-active-bg, #1e40af);
+  background: var(--osm-badge-layer-active-bg, #1e40af);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  transition: all 0.15s;
+}
+
+.osm-map-layer-clear:hover { opacity: 0.8; }
+
+/* Chips for ≤ 10 layers */
+.osm-map-layer-chip {
+  display: inline-block;
+  font-size: var(--osm-badge-font-size);
+  padding: var(--osm-badge-padding);
+  border-radius: var(--osm-badge-radius);
+  border: 1px solid var(--osm-badge-layer-border, #93c5fd);
+  background: var(--osm-badge-layer-bg, #dbeafe);
+  color: var(--osm-badge-layer-color, #1e40af);
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.15s;
+}
+
+.osm-map-layer-chip:hover { opacity: 0.7; }
+
+.osm-map-layer-chip--active {
+  background: var(--osm-badge-layer-active-bg, #1e40af);
+  border-color: var(--osm-badge-layer-active-bg, #1e40af);
+  color: #fff;
+}
+
+.osm-map-layer-chip--active:hover { opacity: 0.85; }
 
 
 /* --------------------------------------------------------------------------

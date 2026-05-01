@@ -804,6 +804,7 @@ def _render_place_html(
     tile_url: str,
     attribution: str,
     images_map: dict[str, list[str]] | None = None,
+    layer_field: str | None = None,
 ) -> str:
     """Render a single map block that fetches one or more GeoJSON URLs.
 
@@ -830,6 +831,10 @@ def _render_place_html(
     if images_map:
         images_attr = f' data-images="{_attr(json.dumps(images_map))}"'
 
+    layer_field_attr = ""
+    if layer_field:
+        layer_field_attr = f' data-osm-layer-field="{_attr(layer_field)}"'
+
     CAPTION_MAX = 3
     if len(names) <= CAPTION_MAX:
         captions = ", ".join(names)
@@ -847,7 +852,8 @@ def _render_place_html(
         f'data-geojson="{entries_attr}" '
         f'data-tile="{tile_attr}" '
         f'data-attribution="{attribution_attr}"'
-        f"{images_attr}>"
+        f"{images_attr}"
+        f"{layer_field_attr}>"
         f'<div class="osm-map-loading"><div class="osm-map-spinner"></div></div>'
         f"</div>\n"
         f'  <div class="osm-map-caption">{captions}</div>\n'
@@ -1330,8 +1336,15 @@ def _process_content(
 
         images_dict = images_map if images_map else None
 
+        field_schema = _resolve_schema_properties(specs, resolver, settings)
+        layer_field = next(
+            (k for k, v in field_schema.items() if v.get("x-osm-map-layer") is True),
+            None,
+        )
+
         return _render_place_html(
-            geojson_entries, names, map_height, tile_url, attribution, images_dict
+            geojson_entries, names, map_height, tile_url, attribution, images_dict,
+            layer_field,
         )
 
     result = cast(str, pattern.sub(replace, content))

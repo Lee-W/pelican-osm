@@ -195,7 +195,7 @@
   }
 
   // ── Add GeoJSON features to map ───────────────────────────────
-  function addFeatures(layer, features, fragment, markers, imagesMap) {
+  function addFeatures(layer, features, fragment, markers, imagesMap, layerField) {
     for (const feature of features) {
       if (feature.geometry?.type !== "Point") continue;
       const props = feature.properties || {};
@@ -211,6 +211,7 @@
       marker._osmPlaceId = props.id || null;
       marker._osmPlaceName = props.name;
       marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
+      marker._osmLayer = layerField ? (props[layerField] || null) : null;
       const images = imagesMap[placeKey] || [];
       marker.bindPopup(buildPopupHtml(props, lat, lon, images), {
         maxWidth: 280,
@@ -340,9 +341,63 @@
     mapEl.parentElement.insertBefore(btn, mapEl.nextSibling);
   }
 
+  // ── Shared filter state + marker reconciler ──────────────────
+  function makeFilterState(map, markers, clusterGroup, initialView) {
+    const state = { tag: null, layer: null };
+
+    function refitBounds(visible) {
+      if (visible.length === 0) return;
+      if (visible.length === 1) {
+        map.setView(visible[0].getLatLng(), 14);
+      } else {
+        map.fitBounds(L.featureGroup(visible).getBounds().pad(0.15));
+      }
+    }
+
+    function apply() {
+      const { tag, layer } = state;
+      const visible = [];
+      if (clusterGroup) {
+        clusterGroup.clearLayers();
+        markers.forEach((m) => {
+          const ok = (!tag || m._osmTags.includes(tag)) &&
+                     (!layer || m._osmLayer === layer);
+          if (ok) { clusterGroup.addLayer(m); visible.push(m); }
+        });
+      } else {
+        markers.forEach((m) => {
+          const ok = (!tag || m._osmTags.includes(tag)) &&
+                     (!layer || m._osmLayer === layer);
+          if (ok) { m.addTo(map); visible.push(m); }
+          else m.remove();
+        });
+      }
+      if (!tag && !layer) {
+        if (initialView.bounds) map.fitBounds(initialView.bounds);
+        else map.setView(initialView.center, initialView.zoom);
+      } else {
+        refitBounds(visible);
+      }
+      return visible;
+    }
+
+    const callbacks = [];
+    function onApply(cb) { callbacks.push(cb); }
+    const _apply = apply;
+    function applyAndNotify() {
+      const visible = _apply();
+      callbacks.forEach((cb) => cb(visible));
+      return visible;
+    }
+
+    return { state, apply: applyAndNotify, markers, onApply };
+  }
+
   // ── Map tag filter ────────────────────────────────────────────
-  function setupMapTagFilter(mapEl, map, markers, clusterGroup, initialView) {
-    // Collect all unique tags
+  function setupMapTagFilter(mapEl, filterCtx) {
+    const { state, apply } = filterCtx;
+    const markers = filterCtx.markers;
+
     const allTags = new Set();
     for (const m of markers) {
       for (const t of m._osmTags) allTags.add(t);
@@ -352,69 +407,17 @@
     const mapBlock = mapEl.closest(".osm-map-block");
     if (!mapBlock) return;
 
-    // Create filter bar
     const bar = document.createElement("div");
     bar.className = "osm-map-tag-bar";
 
-    let activeTag = null;
-
-    function clearFilter() {
-      activeTag = null;
-      bar.querySelectorAll(".osm-map-tag-chip").forEach((c) => {
-        c.classList.remove("osm-map-tag-chip--active");
-        c.textContent = c.dataset.tag;
-      });
-      if (clusterGroup) {
-        clusterGroup.clearLayers();
-        markers.forEach((m) => clusterGroup.addLayer(m));
-      } else {
-        markers.forEach((m) => m.addTo(map));
-      }
-      refitBounds(markers);
-    }
-
-    function refitBounds(visible) {
-      if (visible.length === 0) return;
-      if (visible.length === 1) {
-        map.setView(visible[0].getLatLng(), 14);
-      } else {
-        const group = L.featureGroup(visible);
-        map.fitBounds(group.getBounds().pad(0.15));
-      }
-    }
-
-    function applyFilter(tag) {
-      if (tag === activeTag) {
-        clearFilter();
-        return;
-      }
-      activeTag = tag;
+    function setTag(tag) {
+      state.tag = tag;
       bar.querySelectorAll(".osm-map-tag-chip").forEach((c) => {
         const isActive = c.dataset.tag === tag;
         c.classList.toggle("osm-map-tag-chip--active", isActive);
         c.textContent = isActive ? tag + " ✕" : c.dataset.tag;
       });
-
-      const visible = [];
-      if (clusterGroup) {
-        clusterGroup.clearLayers();
-        markers.forEach((m) => {
-          if (m._osmTags.includes(tag)) {
-            clusterGroup.addLayer(m);
-            visible.push(m);
-          }
-        });
-      } else {
-        markers.forEach((m) => {
-          if (m._osmTags.includes(tag)) {
-            m.addTo(map);
-            visible.push(m);
-          } else {
-            m.remove();
-          }
-        });
-      }
-      refitBounds(visible);
+      apply();
     }
 
     for (const tag of allTags) {
@@ -424,13 +427,135 @@
       chip.textContent = tag;
       chip.addEventListener("click", (e) => {
         e.preventDefault();
-        applyFilter(tag);
+        setTag(state.tag === tag ? null : tag);
       });
       bar.appendChild(chip);
     }
 
-    // Insert bar after the map element, before caption
     mapBlock.insertBefore(bar, mapEl.nextSibling);
+
+    // When any filter changes, hide tag chips that have no visible markers
+    filterCtx.onApply((visible) => {
+      bar.querySelectorAll(".osm-map-tag-chip").forEach((chip) => {
+        const tag = chip.dataset.tag;
+        const hasVisible = visible.some((m) => m._osmTags.includes(tag));
+        chip.style.display = hasVisible || state.tag === tag ? "" : "none";
+      });
+    });
+  }
+
+  // ── Layer filter (x-osm-map-layer field) ─────────────────────
+  function setupMapLayerFilter(mapEl, filterCtx) {
+    const { state, apply, markers } = filterCtx;
+
+    const allLayers = [...new Set(markers.map((m) => m._osmLayer).filter(Boolean))].sort();
+    if (allLayers.length <= 1) return;
+
+    const mapBlock = mapEl.closest(".osm-map-block");
+    if (!mapBlock) return;
+
+    const bar = document.createElement("div");
+    bar.className = "osm-map-layer-bar";
+
+    if (allLayers.length > 10) {
+      // ── Select + explicit clear button ──────────────────────
+      const labelEl = document.createElement("label");
+      labelEl.className = "osm-map-layer-label";
+      labelEl.textContent = "作品：";
+
+      const select = document.createElement("select");
+      select.className = "osm-map-layer-select";
+
+      const defaultOpt = document.createElement("option");
+      defaultOpt.value = "";
+      defaultOpt.textContent = `全部（${allLayers.length}）`;
+      select.appendChild(defaultOpt);
+      for (const layer of allLayers) {
+        const opt = document.createElement("option");
+        opt.value = layer;
+        opt.textContent = layer;
+        select.appendChild(opt);
+      }
+
+      const clearBtn = document.createElement("button");
+      clearBtn.className = "osm-map-layer-clear";
+      clearBtn.textContent = "✕";
+      clearBtn.title = "清除篩選";
+      clearBtn.style.display = "none";
+
+      function syncClearBtn() {
+        clearBtn.style.display = state.layer ? "" : "none";
+      }
+
+      select.addEventListener("change", () => {
+        state.layer = select.value || null;
+        syncClearBtn();
+        apply();
+      });
+      clearBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        state.layer = null;
+        select.value = "";
+        syncClearBtn();
+        apply();
+      });
+
+      labelEl.appendChild(select);
+      bar.appendChild(labelEl);
+      bar.appendChild(clearBtn);
+
+      filterCtx.onApply(() => {
+        // Disable options with no markers under TAG filter only —
+        // never disable based on layer filter so user can switch freely.
+        const tagFiltered = new Set(
+          markers
+            .filter((m) => !state.tag || m._osmTags.includes(state.tag))
+            .map((m) => m._osmLayer)
+            .filter(Boolean),
+        );
+        select.querySelectorAll("option").forEach((opt) => {
+          if (!opt.value) return;
+          opt.disabled = !tagFiltered.has(opt.value);
+        });
+        select.value = state.layer || "";
+        syncClearBtn();
+      });
+
+    } else {
+      // ── Chips (≤ 10 layers) ──────────────────────────────────
+      function setLayer(layer) {
+        state.layer = layer;
+        bar.querySelectorAll(".osm-map-layer-chip").forEach((c) => {
+          const isActive = c.dataset.layer === layer;
+          c.classList.toggle("osm-map-layer-chip--active", isActive);
+          c.textContent = isActive ? layer + " ✕" : c.dataset.layer;
+        });
+        apply();
+      }
+
+      for (const layer of allLayers) {
+        const chip = document.createElement("button");
+        chip.className = "osm-map-layer-chip";
+        chip.dataset.layer = layer;
+        chip.textContent = layer;
+        chip.addEventListener("click", (e) => {
+          e.preventDefault();
+          setLayer(state.layer === layer ? null : layer);
+        });
+        bar.appendChild(chip);
+      }
+
+      filterCtx.onApply((visible) => {
+        const visibleLayers = new Set(visible.map((m) => m._osmLayer).filter(Boolean));
+        bar.querySelectorAll(".osm-map-layer-chip").forEach((chip) => {
+          const layer = chip.dataset.layer;
+          chip.style.display = visibleLayers.has(layer) || state.layer === layer ? "" : "none";
+        });
+      });
+    }
+
+    const tagBar = mapBlock.querySelector(".osm-map-tag-bar");
+    mapBlock.insertBefore(bar, tagBar || mapEl.nextSibling);
   }
 
   // ── Map init ──────────────────────────────────────────────────
@@ -439,6 +564,7 @@
     const tileUrl = el.getAttribute("data-tile");
     const attribution = el.getAttribute("data-attribution");
     const rawImages = el.getAttribute("data-images");
+    const layerField = el.getAttribute("data-osm-layer-field") || null;
 
     let entries;
     let imagesData = {};
@@ -487,7 +613,7 @@
     for (const result of results) {
       if (result.status === "fulfilled") {
         const { fc, fragment } = result.value;
-        addFeatures(markerLayer, fc.features || [], fragment, markers, imagesData);
+        addFeatures(markerLayer, fc.features || [], fragment, markers, imagesData, layerField);
       } else {
         fetchErrors++;
         console.warn("pelican-osm: failed to fetch GeoJSON:", result.reason);
@@ -529,8 +655,14 @@
     // Reset view button
     setupResetButton(el, map, initialView);
 
+    // Shared filter state — both tag and layer filters use AND logic
+    const filterCtx = makeFilterState(map, markers, clusterGroup, initialView);
+
     // Tag filtering on map
-    setupMapTagFilter(el, map, markers, clusterGroup, initialView);
+    setupMapTagFilter(el, filterCtx);
+
+    // Layer filtering (x-osm-map-layer field)
+    setupMapLayerFilter(el, filterCtx);
 
     // Deep linking: open popup if URL hash matches a place id or name
     const hash = decodeURIComponent(window.location.hash.slice(1));
