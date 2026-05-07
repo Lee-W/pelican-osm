@@ -1,3 +1,9 @@
+## 0.12.1 (2026-05-07)
+
+### Fix
+
+- preserve canonical URLs across i18n subsite builds
+
 ## 0.12.0 (2026-05-01)
 
 ### Feat
