@@ -1499,7 +1499,18 @@ def _register_markdown_extension(settings: dict) -> None:
 
 def _init_resolver(pelican_obj) -> None:
     global _resolver, _settings, _article_url_map, _content_path
-    _article_url_map = {}
+
+    # i18n_subsites fires signals.initialized for each language subsite using
+    # a SITEURL that extends the main site's (e.g. /en under /). Resetting
+    # the URL map there would clobber canonical zh-tw URLs with per-subsite
+    # fallback URLs (e.g. /en/post-zh-tw.html) that may not exist, breaking
+    # both the table links and the shared GeoJSON used by all map pins.
+    new_siteurl = pelican_obj.settings.get("SITEURL", "")
+    old_siteurl = _settings.get("SITEURL", "")
+    is_subsite = bool(old_siteurl) and new_siteurl.startswith(old_siteurl + "/")
+    if not is_subsite:
+        _article_url_map = {}
+
     _settings = pelican_obj.settings
 
     # Pelican's PATH setting may be relative.
@@ -1543,11 +1554,14 @@ def _process_article(content) -> None:
     url = getattr(content, "url", None)
     if src and url:
         abs_url = siteurl + "/" + url.lstrip("/")
-        _article_url_map[src] = abs_url
+        # setdefault: first write wins. When i18n_subsites processes an
+        # untranslated article as a fallback, its URL (e.g. /en/post-zh-tw.html)
+        # must not overwrite the canonical main-site URL already in the map.
+        _article_url_map.setdefault(src, abs_url)
         if _content_path:
             try:
                 rel = Path(src).relative_to(_content_path)
-                _article_url_map[str(rel)] = abs_url
+                _article_url_map.setdefault(str(rel), abs_url)
             except ValueError:
                 pass
 
