@@ -420,6 +420,18 @@ https://example.com/my-post.html#豊島区立南池袋第二公園
 
 The map will pan to the marker and open its popup automatically. When marker clustering is enabled, the cluster is expanded first.
 
+### Table row anchors
+
+Each row rendered by `{% place_list %}` carries an `id="osm-place-<slug>"` anchor, where `<slug>` is derived from the place's `id` field (preferred) or a slug of its `name`. This lets external links jump straight to a row:
+
+```text
+https://example.com/my-post.html#osm-place-normal_park
+```
+
+When a map and a table for the same place coexist on the page, the marker's popup includes a "View in table" link that scrolls to the matching row, and clicking it also opens the popup on the map (via `hashchange`).
+
+If two rows on the same page resolve to the same slug — common with `items:` expansion or duplicate names — the second and later rows get a `-2`, `-3`, … suffix to keep the HTML valid.
+
 ## Tag filtering
 
 Tag badges are clickable in both maps and tables.

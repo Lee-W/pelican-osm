@@ -23,6 +23,7 @@
     osmLink: "OSM",
     googleLink: "Google",
     placeCount: (n) => `${n} place${n === 1 ? "" : "s"}`,
+    viewInTable: "View in table",
     fieldLabels: {},
   };
 
@@ -32,6 +33,7 @@
       placeCount: (n) => `${n} 個地點`,
       loadError: "無法載入地圖資料",
       noPlaces: "找不到地點",
+      viewInTable: "在表格中檢視",
       fieldLabels: {
         date: "日期",
         category: "分類",
@@ -113,6 +115,7 @@
     "lat",
     "lon",
     "id",
+    "slug",
     "tags",
     "images",
     "urls",
@@ -182,6 +185,13 @@
           `</div>`
         : "";
 
+    // Only emit the table link when an anchor for this slug actually
+    // exists on the page — keeps the popup clean on map-only articles.
+    const tableLink =
+      props.slug && document.getElementById("osm-place-" + props.slug)
+        ? `<div class="osm-popup-table-link"><a href="#osm-place-${props.slug}">${i18n.viewInTable}</a></div>`
+        : "";
+
     return (
       `<div class="osm-popup">` +
       `<strong class="osm-popup-name">${props.name}</strong>` +
@@ -189,6 +199,7 @@
       fieldLines +
       links +
       postLink +
+      tableLink +
       photoGallery +
       `</div>`
     );
@@ -210,6 +221,7 @@
       const placeKey = props.id || props.name;
       marker._osmPlaceId = props.id || null;
       marker._osmPlaceName = props.name;
+      marker._osmPlaceSlug = props.slug || null;
       marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
       marker._osmLayer = layerField ? (props[layerField] || null) : null;
       const images = imagesMap[placeKey] || [];
@@ -676,24 +688,33 @@
       });
     });
 
-    // Deep linking: open popup if URL hash matches a place id or name
-    const hash = decodeURIComponent(window.location.hash.slice(1));
-    if (hash) {
+    // Deep linking: open popup when URL hash matches a place id/name, or the
+    // table-row anchor (#osm-place-<slug>) emitted by the place_list shortcode.
+    // hashchange handles in-page clicks from the popup's "view in table" link.
+    function openMarkerFromHash() {
+      const hash = decodeURIComponent(window.location.hash.slice(1));
+      if (!hash) return;
+      const slugFromAnchor = hash.startsWith("osm-place-")
+        ? hash.slice("osm-place-".length)
+        : null;
       const target = markers.find(
-        (m) => m._osmPlaceId === hash || m._osmPlaceName === hash,
+        (m) =>
+          m._osmPlaceId === hash ||
+          m._osmPlaceName === hash ||
+          (slugFromAnchor && m._osmPlaceSlug === slugFromAnchor),
       );
-      if (target) {
-        // If clustered, uncollapse the cluster first
-        if (clusterGroup && clusterGroup.zoomToShowLayer) {
-          clusterGroup.zoomToShowLayer(target, () => {
-            target.openPopup();
-          });
-        } else {
-          map.setView(target.getLatLng(), 16);
+      if (!target) return;
+      if (clusterGroup && clusterGroup.zoomToShowLayer) {
+        clusterGroup.zoomToShowLayer(target, () => {
           target.openPopup();
-        }
+        });
+      } else {
+        map.setView(target.getLatLng(), 16);
+        target.openPopup();
       }
     }
+    openMarkerFromHash();
+    window.addEventListener("hashchange", openMarkerFromHash);
   }
 
   function setupPhotoLightbox() {
