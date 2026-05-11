@@ -215,12 +215,23 @@
 
     // Only emit the table link when an anchor for this slug actually
     // exists on the page — keeps the popup clean on map-only articles.
-    // Slug is constrained to alnum+hyphen by Python's _slugify, but escape
-    // defensively in case future changes loosen the slug rules.
-    const tableLink =
-      props.slug && document.getElementById("osm-place-" + props.slug)
-        ? `<div class="osm-popup-table-link"><a href="#osm-place-${esc(props.slug)}">${esc(i18n.viewInTable)}</a></div>`
-        : "";
+    // For items-expanded places the parent slug doesn't appear as an id;
+    // fall back to data-osm-parent-slug, which marks every expanded row.
+    let tableAnchorId = null;
+    if (props.slug) {
+      const direct = document.getElementById("osm-place-" + props.slug);
+      if (direct) {
+        tableAnchorId = direct.id;
+      } else {
+        const parentMatch = document.querySelector(
+          `[data-osm-parent-slug="${CSS.escape(props.slug)}"]`,
+        );
+        if (parentMatch) tableAnchorId = parentMatch.id;
+      }
+    }
+    const tableLink = tableAnchorId
+      ? `<div class="osm-popup-table-link"><a href="#${esc(tableAnchorId)}">${esc(i18n.viewInTable)}</a></div>`
+      : "";
 
     return (
       `<div class="osm-popup">` +
