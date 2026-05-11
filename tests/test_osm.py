@@ -1592,6 +1592,56 @@ class TestPlaceRowAnchors:
 
 
 # ---------------------------------------------------------------------------
+# HTML escaping in the place_list table (XSS hardening)
+# ---------------------------------------------------------------------------
+
+
+class TestPlaceListEscaping:
+    def test_name_is_escaped_in_attr_and_text(self):
+        places = [{"name": "<img src=x onerror=alert(1)>", "lat": 1.0, "lon": 2.0}]
+        html_out = _render_place_list_html(places, [], {})
+        assert "<img src=x onerror=alert(1)>" not in html_out
+        assert "&lt;img src=x onerror=alert(1)&gt;" in html_out
+
+    def test_tag_value_is_escaped(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "tags": ["<script>alert(1)</script>"]}
+        ]
+        html_out = _render_place_list_html(places, [], {})
+        assert "<script>alert(1)</script>" not in html_out
+        assert "&lt;script&gt;" in html_out
+
+    def test_field_value_is_escaped(self):
+        places = [{"name": "A", "lat": 1.0, "lon": 2.0, "note": "<b>bold</b>"}]
+        html_out = _render_place_list_html(places, ["note"], {})
+        assert "<b>bold</b>" not in html_out
+        assert "&lt;b&gt;bold&lt;/b&gt;" in html_out
+
+    def test_javascript_url_dropped_in_urls(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "urls": [{"label": "click", "href": "javascript:alert(1)"}],
+            }
+        ]
+        html_out = _render_place_list_html(places, [], {})
+        assert "javascript:" not in html_out
+        assert 'href="#"' in html_out
+
+    def test_group_header_title_is_escaped(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "<svg onload=alert(1)>"}
+        ]
+        html_out = _render_place_list_html(
+            places, ["anime"], {}, group_by=["anime"], group_summary_at=["anime"]
+        )
+        assert "<svg onload=alert(1)>" not in html_out
+        assert "&lt;svg onload=alert(1)&gt;" in html_out
+
+
+# ---------------------------------------------------------------------------
 # _validate_place
 # ---------------------------------------------------------------------------
 

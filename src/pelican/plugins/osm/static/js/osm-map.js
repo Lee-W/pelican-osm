@@ -109,6 +109,30 @@
     return _clusterReady;
   }
 
+  // ── HTML safety helpers ───────────────────────────────────────
+  // The popup is built as an HTML string and parsed by Leaflet, so every
+  // user-supplied value (YAML place names, tags, field values, URL labels)
+  // must be escaped before interpolation. `safeUrl` also rejects URL schemes
+  // that can execute script (javascript:, data:, vbscript:) — relative URLs
+  // and the http/https/mailto/tel set are allowed through unchanged.
+  function esc(value) {
+    if (value === null || value === undefined) return "";
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  const SAFE_URL_SCHEMES = /^(?:https?:|mailto:|tel:|\/|\.|#|\?)/i;
+  function safeUrl(value) {
+    if (value === null || value === undefined) return "#";
+    const s = String(value).trim();
+    if (!s) return "#";
+    return SAFE_URL_SCHEMES.test(s) ? s : "#";
+  }
+
   // ── Field label resolution ────────────────────────────────────
   const HIDDEN_FIELDS = new Set([
     "name",
@@ -131,7 +155,10 @@
     const tagBadges =
       Array.isArray(props.tags) && props.tags.length
         ? `<div class="osm-popup-tags">${props.tags
-            .map((t) => `<span class="osm-badge osm-badge--tag">${t}</span>`)
+            .map(
+              (t) =>
+                `<span class="osm-badge osm-badge--tag">${esc(t)}</span>`,
+            )
             .join("")}</div>`
         : "";
 
@@ -139,17 +166,18 @@
       .filter(([key]) => !HIDDEN_FIELDS.has(key))
       .map(
         ([key, value]) =>
-          `<div class="osm-popup-field"><span class="osm-popup-label">${fieldLabel(key)}:</span> ${value}</div>`,
+          `<div class="osm-popup-field"><span class="osm-popup-label">${esc(fieldLabel(key))}:</span> ${esc(value)}</div>`,
       )
       .join("");
 
+    // lat/lon come from GeoJSON coordinates (numbers); safe to interpolate.
     const osmUrl = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}&zoom=16`;
     const googleUrl = `https://www.google.com/maps?q=${lat},${lon}`;
     const links =
       `<div class="osm-popup-links">` +
-      `<a href="${osmUrl}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>` +
+      `<a href="${esc(osmUrl)}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>` +
       ` · ` +
-      `<a href="${googleUrl}" target="_blank" rel="noopener" title="Google Maps">📍</a>` +
+      `<a href="${esc(googleUrl)}" target="_blank" rel="noopener" title="Google Maps">📍</a>` +
       `</div>`;
 
     // urls is normalized by Python to [{label, href}, ...]
@@ -167,7 +195,7 @@
                   text = "Link";
                 }
               }
-              return `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+              return `<a href="${esc(safeUrl(href))}" target="_blank" rel="noopener">${esc(text)}</a>`;
             })
             .join(" | ") +
           `</div>`
@@ -179,7 +207,7 @@
           images
             .map(
               (img, idx) =>
-                `<img src="${img}" alt="Place photo" class="osm-popup-photo" data-fullsrc="${img}" data-photo-idx="${idx}">`,
+                `<img src="${esc(safeUrl(img))}" alt="Place photo" class="osm-popup-photo" data-fullsrc="${esc(safeUrl(img))}" data-photo-idx="${idx}">`,
             )
             .join("") +
           `</div>`
@@ -187,14 +215,16 @@
 
     // Only emit the table link when an anchor for this slug actually
     // exists on the page — keeps the popup clean on map-only articles.
+    // Slug is constrained to alnum+hyphen by Python's _slugify, but escape
+    // defensively in case future changes loosen the slug rules.
     const tableLink =
       props.slug && document.getElementById("osm-place-" + props.slug)
-        ? `<div class="osm-popup-table-link"><a href="#osm-place-${props.slug}">${i18n.viewInTable}</a></div>`
+        ? `<div class="osm-popup-table-link"><a href="#osm-place-${esc(props.slug)}">${esc(i18n.viewInTable)}</a></div>`
         : "";
 
     return (
       `<div class="osm-popup">` +
-      `<strong class="osm-popup-name">${props.name}</strong>` +
+      `<strong class="osm-popup-name">${esc(props.name)}</strong>` +
       tagBadges +
       fieldLines +
       links +
