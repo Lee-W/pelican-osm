@@ -1,3 +1,20 @@
+## 0.13.0 (2026-05-11)
+
+### Feat
+
+- drive map popup field labels from schema i18n
+- use item field as anchor suffix for items expansion
+- add table row anchors with bi-directional map↔table linking
+
+### Fix
+
+- demote init-time path logs from warning to debug
+- escape user-controlled HTML in popup and table
+
+### Perf
+
+- move place_list image URLs to a single JSON sidecar
+
 ## 0.12.1 (2026-05-07)
 
 ### Fix
