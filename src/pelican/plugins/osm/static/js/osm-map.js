@@ -1204,6 +1204,21 @@
     const tbody = table.querySelector("tbody");
     if (!tbody) return;
 
+    // Per-row images live in a single JSON sidecar next to the table
+    // (one parse vs. one decode per row in the old data-images path).
+    const wrapper = table.closest(".osm-place-list-wrapper");
+    const sidecar = wrapper && wrapper.querySelector("script.osm-list-images");
+    let imagesBySlug = null;
+    function getImagesBySlug() {
+      if (imagesBySlug !== null) return imagesBySlug;
+      try {
+        imagesBySlug = sidecar ? JSON.parse(sidecar.textContent) : {};
+      } catch (e) {
+        imagesBySlug = {};
+      }
+      return imagesBySlug;
+    }
+
     tbody.addEventListener("click", (e) => {
       const iconCell = e.target.closest("td.osm-list-image-icon");
       if (!iconCell) return;
@@ -1211,10 +1226,9 @@
       if (!row) return;
       e.stopPropagation();
 
-      const images = JSON.parse(
-        row.dataset.images.replace(/&quot;/g, '"').replace(/&amp;/g, "&"),
-      );
-      showLightbox(0, images);
+      const slug = row.dataset.osmPlaceSlug;
+      const images = slug ? getImagesBySlug()[slug] : null;
+      if (images && images.length) showLightbox(0, images);
     });
   }
 

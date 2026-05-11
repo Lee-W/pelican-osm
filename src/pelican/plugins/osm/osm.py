@@ -195,9 +195,7 @@ def _expand_items(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
             # anchor suffix downstream, so anchors read as `cinema-h1` rather
             # than the opaque `cinema-2` produced by plain collision dedup.
             slug_parts = [
-                str(cleaned[k])
-                for k in cleaned
-                if cleaned.get(k) not in (None, "", [])
+                str(cleaned[k]) for k in cleaned if cleaned.get(k) not in (None, "", [])
             ]
             if slug_parts:
                 merged["_item_slug_parts"] = slug_parts
@@ -1156,6 +1154,9 @@ def _render_place_list_html(
         )
 
     used_row_ids: set[str] = set()
+    # Aggregated <slug>: [url, ...] map, emitted once as a JSON sidecar
+    # instead of bloating every <tr> with a data-images attribute.
+    images_by_slug: dict[str, list[str]] = {}
 
     def _row_slug(row: dict[str, Any]) -> tuple[str, str]:
         """Return ``(slug, parent_slug)`` for a row.
@@ -1196,7 +1197,6 @@ def _render_place_list_html(
         slug, parent_slug = _row_slug(row)
 
         raw = row.get("images")
-        images_attr = ""
         has_imgs = False
         if raw:
             if isinstance(raw, str):
@@ -1208,13 +1208,9 @@ def _render_place_list_html(
                     if img is not None
                 ]
                 if resolved:
-                    escaped = (
-                        json.dumps(resolved, ensure_ascii=False)
-                        .replace("&", "&amp;")
-                        .replace('"', "&quot;")
-                    )
-                    images_attr = f' data-images="{escaped}"'
                     has_imgs = True
+                    if slug:
+                        images_by_slug[slug] = resolved
 
         classes = ["osm-place-row"]
         if has_imgs:
@@ -1224,7 +1220,6 @@ def _render_place_list_html(
         if slug:
             parts.append(f' id="osm-place-{slug}"')
         parts.append(f' class="{" ".join(classes)}"')
-        parts.append(images_attr)
         if slug:
             parts.append(f' data-osm-place-slug="{slug}"')
         if parent_slug:
@@ -1357,6 +1352,19 @@ def _render_place_list_html(
         for row in rows:
             rendered_rows.append(render_data_row(row))
 
+    # Single JSON sidecar instead of per-row data-images attrs. The text
+    # is HTML-safe because <script type="application/json"> isn't parsed
+    # as JS; only "</script" needs neutralising.
+    images_sidecar = ""
+    if images_by_slug:
+        sidecar_json = json.dumps(images_by_slug, ensure_ascii=False).replace(
+            "</", "<\\/"
+        )
+        images_sidecar = (
+            '<script type="application/json" class="osm-list-images">'
+            f"{sidecar_json}</script>\n"
+        )
+
     return (
         '<div class="osm-place-list-wrapper">\n'
         '<table class="osm-place-list">\n'
@@ -1364,6 +1372,7 @@ def _render_place_list_html(
         "<tbody>\n" + "\n".join(rendered_rows) + "\n</tbody>\n"
         "</table>\n"
         '<div class="osm-place-list-count"></div>\n'
+        f"{images_sidecar}"
         "</div>"
     )
 
