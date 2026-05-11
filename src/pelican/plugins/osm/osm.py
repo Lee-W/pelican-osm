@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import html
 import json
 import logging
 import re
@@ -72,6 +73,23 @@ def _slugify(value: str) -> str:
     s = re.sub(r"\s+", "-", str(value).strip())
     out = [ch for ch in s if ch == "-" or ch.isalnum()]
     return "".join(out).lower() or "group"
+
+
+_SAFE_URL_SCHEMES = re.compile(r"^(?:https?:|mailto:|tel:|/|\.|#|\?)", re.IGNORECASE)
+
+
+def _safe_url(value: Any) -> str:
+    """Return ``value`` if its URL scheme can't execute script, else ``"#"``.
+
+    Blocks ``javascript:``, ``data:``, ``vbscript:`` and friends. Schemeless
+    relative URLs (``/foo``, ``./bar``, ``#anchor``, ``?q=1``) are allowed.
+    """
+    if value is None:
+        return "#"
+    s = str(value).strip()
+    if not s:
+        return "#"
+    return s if _SAFE_URL_SCHEMES.match(s) else "#"
 
 
 def _place_anchor_slug(place: dict[str, Any]) -> str:
@@ -1066,7 +1084,8 @@ def _render_place_list_html(
         if isinstance(tags, str):
             tags = [tags]
         return " ".join(
-            f'<span class="osm-badge osm-badge--tag">{t}</span>' for t in tags
+            f'<span class="osm-badge osm-badge--tag">{html.escape(str(t))}</span>'
+            for t in tags
         )
 
     def render_urls(urls: Any) -> str:
@@ -1080,7 +1099,8 @@ def _render_place_list_html(
             return parsed.netloc or "Link"
 
         return " ".join(
-            f'<a href="{u["href"]}">{link_text(u)}</a>'
+            f'<a href="{html.escape(_safe_url(u["href"]), quote=True)}">'
+            f"{html.escape(link_text(u))}</a>"
             for u in urls
             if isinstance(u, dict) and u.get("href")
         )
@@ -1106,9 +1126,10 @@ def _render_place_list_html(
         )
 
     def render_name_cell(place: dict[str, Any]) -> str:
-        name = place.get("name", "")
+        name = str(place.get("name", ""))
         return (
-            f'<td data-sort-value="{name}">{name}'
+            f'<td data-sort-value="{html.escape(name, quote=True)}">'
+            f"{html.escape(name)}"
             f"{render_map_links(place.get('lat'), place.get('lon'))}</td>"
         )
 
@@ -1199,13 +1220,13 @@ def _render_place_list_html(
             )
             if sort_value is not None:
                 return (
-                    f'<td data-sort-value="{sort_value.replace(chr(34), "&quot;")}">'
-                    f"{display}</td>"
+                    f'<td data-sort-value="{html.escape(sort_value, quote=True)}">'
+                    f"{html.escape(display)}</td>"
                 )
-            return f"<td>{display}</td>"
+            return f"<td>{html.escape(display)}</td>"
         if value == "" or value is None:
             return "<td></td>"
-        return f"<td>{_format_scalar(value)}</td>"
+        return f"<td>{html.escape(_format_scalar(value))}</td>"
 
     def render_data_row(row: dict[str, Any]) -> str:
         cells = []
@@ -1265,6 +1286,9 @@ def _render_place_list_html(
                 title = str(val)
                 count_html = ""
                 if group_count_template:
+                    # The template itself is developer-controlled (set via
+                    # OSM_GROUP_COUNT_TEMPLATE), so leave its markup intact;
+                    # only ``n`` is interpolated and it's always an int.
                     count_text = group_count_template.format(n=prefix_counts[prefix])
                     count_html = f'<span class="osm-group-count">{count_text}</span>'
                 # When ``name`` is the summary field at this depth, surface the
@@ -1281,7 +1305,7 @@ def _render_place_list_html(
                     f'<td colspan="{col_count}">'
                     f'<span class="osm-group-header-toggle"'
                     f' aria-hidden="true">▾</span>'
-                    f'<strong class="osm-group-header-title">{title}</strong>'
+                    f'<strong class="osm-group-header-title">{html.escape(title)}</strong>'
                     f"{count_html}"
                     f"{map_links_html}"
                     f"</td></tr>"
