@@ -430,7 +430,7 @@ https://example.com/my-post.html#osm-place-normal_park
 
 When a map and a table for the same place coexist on the page, the marker's popup includes a "View in table" link that scrolls to the matching row, and clicking it also opens the popup on the map (via `hashchange`).
 
-If two rows on the same page resolve to the same slug — common with `items:` expansion or duplicate names — the second and later rows get a `-2`, `-3`, … suffix to keep the HTML valid.
+Rows from `items:` expansion (e.g. one cinema with multiple halls) carry a suffix derived from the first item-distinguishing field, so anchors stay readable — `osm-place-cinema-h1`, `osm-place-cinema-h2`, … rather than `cinema-2`, `cinema-3`. Each expanded row also carries `data-osm-parent-slug="<parent>"`, so a marker popup that only knows the parent slug can still route to one of the rows. Genuine duplicate slugs fall back to a numeric `-2`, `-3`, … suffix.
 
 ## Tag filtering
 

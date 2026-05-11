@@ -63,7 +63,18 @@ BUILTIN_GROUP_COUNT_TEMPLATES = {
 # ``items`` is the nested sub-row container; flattened away by
 # ``_expand_items`` before rendering, so it never appears as a column.
 _LIST_RESERVED = frozenset(
-    ["name", "lat", "lon", "id", "images", "urls", "tags", "_places", "items"]
+    [
+        "name",
+        "lat",
+        "lon",
+        "id",
+        "images",
+        "urls",
+        "tags",
+        "_places",
+        "_item_slug_parts",
+        "items",
+    ]
 )
 
 
@@ -179,7 +190,18 @@ def _expand_items(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         field,
                     )
                     del cleaned[field]
-            result.append(_merge_place(parent_fields, cleaned))
+            merged = _merge_place(parent_fields, cleaned)
+            # Item-distinguishing values (first non-empty) drive the row's
+            # anchor suffix downstream, so anchors read as `cinema-h1` rather
+            # than the opaque `cinema-2` produced by plain collision dedup.
+            slug_parts = [
+                str(cleaned[k])
+                for k in cleaned
+                if cleaned.get(k) not in (None, "", [])
+            ]
+            if slug_parts:
+                merged["_item_slug_parts"] = slug_parts
+            result.append(merged)
     return result
 
 
@@ -1135,26 +1157,43 @@ def _render_place_list_html(
 
     used_row_ids: set[str] = set()
 
-    def _row_slug(row: dict[str, Any]) -> str:
+    def _row_slug(row: dict[str, Any]) -> tuple[str, str]:
+        """Return ``(slug, parent_slug)`` for a row.
+
+        ``slug`` is the unique row anchor (after dedup); ``parent_slug`` is
+        the unsuffixed place slug, populated only for rows produced by
+        ``_expand_items`` so JS can route marker popups to *any* row
+        belonging to the parent place.
+        """
         base = _place_anchor_slug(row)
         if not base:
-            return ""
-        slug = base
+            return "", ""
+        item_parts = row.get("_item_slug_parts") or []
+        candidate = base
+        parent = ""
+        if item_parts:
+            raw = str(item_parts[0]).strip()
+            if raw:
+                candidate = f"{base}-{_slugify(raw)}"
+                parent = base
+        slug = candidate
         n = 2
         while slug in used_row_ids:
-            slug = f"{base}-{n}"
+            slug = f"{candidate}-{n}"
             n += 1
         used_row_ids.add(slug)
-        return slug
+        return slug, parent
 
     def _row_attrs(row: dict[str, Any]) -> str:
         """Compose ``<tr>`` attributes: anchor id, class, and data-images.
 
-        Anchor (``id="osm-place-<slug>"``) lets external links and map popups
-        deep-link to a specific row; ``data-osm-place-slug`` mirrors it so JS
-        can match a marker to its row without re-slugifying the place name.
+        ``id="osm-place-<slug>"`` is the per-row anchor; ``data-osm-place-slug``
+        mirrors it so JS can match a marker without re-slugifying. For rows
+        from items expansion we also emit ``data-osm-parent-slug`` so a
+        popup whose marker only knows the parent slug can still route to
+        one of the expanded rows.
         """
-        slug = _row_slug(row)
+        slug, parent_slug = _row_slug(row)
 
         raw = row.get("images")
         images_attr = ""
@@ -1188,6 +1227,8 @@ def _render_place_list_html(
         parts.append(images_attr)
         if slug:
             parts.append(f' data-osm-place-slug="{slug}"')
+        if parent_slug:
+            parts.append(f' data-osm-parent-slug="{parent_slug}"')
         return "".join(parts)
 
     has_tags = any(row.get("tags") for row in rows) and not is_hidden("tags")

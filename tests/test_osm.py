@@ -1544,9 +1544,9 @@ class TestPlaceRowAnchors:
         assert 'id="osm-place-same"' in html
         assert 'id="osm-place-same-2"' in html
 
-    def test_items_expansion_dedupes_anchors(self):
-        # _expand_items emits N rows sharing the parent's name; each row
-        # must still get a unique anchor.
+    def test_items_expansion_uses_item_field_as_suffix(self):
+        # When items have a distinguishing field (here `hall`), the anchor
+        # incorporates it so links read as cinema-h1 instead of cinema-2.
         places = [
             {
                 "name": "Cinema",
@@ -1556,9 +1556,34 @@ class TestPlaceRowAnchors:
             }
         ]
         html = _render_place_list_html(places, [], {})
-        assert 'id="osm-place-cinema"' in html
-        assert 'id="osm-place-cinema-2"' in html
-        assert 'id="osm-place-cinema-3"' in html
+        assert 'id="osm-place-cinema-h1"' in html
+        assert 'id="osm-place-cinema-h2"' in html
+        assert 'id="osm-place-cinema-h3"' in html
+        # Parent slug is mirrored so a popup that only knows "cinema" can
+        # still find any of the expanded rows.
+        assert html.count('data-osm-parent-slug="cinema"') == 3
+
+    def test_items_expansion_falls_back_to_numeric_suffix(self):
+        # When item dicts collapse to the same suffix (or have no
+        # distinguishing values), dedup adds a numeric tail.
+        places = [
+            {
+                "name": "Cinema",
+                "lat": 1.0,
+                "lon": 2.0,
+                "items": [{"hall": "H1"}, {"hall": "H1"}],
+            }
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert 'id="osm-place-cinema-h1"' in html
+        assert 'id="osm-place-cinema-h1-2"' in html
+
+    def test_non_item_rows_have_no_parent_slug_attr(self):
+        # Plain (no items-expansion) rows must not carry the parent-slug
+        # fallback attribute — it'd just bloat the HTML for nothing.
+        places = [{"name": "A", "lat": 1.0, "lon": 2.0}]
+        html = _render_place_list_html(places, [], {})
+        assert "data-osm-parent-slug" not in html
 
     def test_row_class_combines_with_has_images(self):
         places = [
