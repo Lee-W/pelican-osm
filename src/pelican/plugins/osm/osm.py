@@ -1604,8 +1604,8 @@ def _init_resolver(pelican_obj) -> None:
         root = (content_path / root).resolve()
 
     _resolver = PlaceResolver(root)
-    log.warning("pelican-osm: content_path=%s", content_path)
-    log.warning("pelican-osm: places root=%s exists=%s", root, root.exists())
+    log.debug("pelican-osm: content_path=%s", content_path)
+    log.debug("pelican-osm: places root=%s exists=%s", root, root.exists())
 
     _register_markdown_extension(_settings)
 
