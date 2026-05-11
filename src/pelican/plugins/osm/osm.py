@@ -857,11 +857,13 @@ def _render_place_html(
     attribution: str,
     images_map: dict[str, list[str]] | None = None,
     layer_field: str | None = None,
+    field_labels: dict[str, str] | None = None,
 ) -> str:
     """Render a single map block that fetches one or more GeoJSON URLs.
 
     geojson_entries: list of {"url": str, "fragment": str | None}
     images_map: dict of {place_id_or_name: [image_urls]}
+    field_labels: dict of {field_name: localized_title} for popup field labels
     """
     global _MAP_COUNTER
     _MAP_COUNTER += 1
@@ -887,6 +889,13 @@ def _render_place_html(
     if layer_field:
         layer_field_attr = f' data-osm-layer-field="{_attr(layer_field)}"'
 
+    field_labels_attr = ""
+    if field_labels:
+        field_labels_attr = (
+            f' data-osm-field-labels="'
+            f'{_attr(json.dumps(field_labels, ensure_ascii=False))}"'
+        )
+
     CAPTION_MAX = 3
     if len(names) <= CAPTION_MAX:
         captions = ", ".join(names)
@@ -905,7 +914,8 @@ def _render_place_html(
         f'data-tile="{tile_attr}" '
         f'data-attribution="{attribution_attr}"'
         f"{images_attr}"
-        f"{layer_field_attr}>"
+        f"{layer_field_attr}"
+        f"{field_labels_attr}>"
         f'<div class="osm-map-loading"><div class="osm-map-spinner"></div></div>'
         f"</div>\n"
         f'  <div class="osm-map-caption">{captions}</div>\n'
@@ -990,6 +1000,27 @@ def _resolve_i18n_title(props: dict[str, Any], lang: str | None) -> str | None:
         if primary != lang.lower():
             candidate = lower.get(primary)
     return candidate if isinstance(candidate, str) and candidate else None
+
+
+def _build_popup_field_labels(
+    field_schema: dict[str, Any], lang: str | None
+) -> dict[str, str]:
+    """Return ``{field_name: localized_title}`` for the map popup.
+
+    Same precedence as the table's column headers:
+    ``x-osm-list-i18n.title.<lang>`` falls back to the schema's plain
+    ``title``. Fields with neither are omitted so the JS side can apply
+    its built-in label or the capitalized-key default.
+    """
+    out: dict[str, str] = {}
+    for field, props in field_schema.items():
+        if not isinstance(props, dict):
+            continue
+        localized = _resolve_i18n_title(props, lang)
+        title = localized or props.get("title")
+        if isinstance(title, str) and title:
+            out[field] = title
+    return out
 
 
 def _render_place_list_html(
@@ -1463,6 +1494,9 @@ def _process_content(
             (k for k, v in field_schema.items() if v.get("x-osm-map-layer") is True),
             None,
         )
+        popup_labels = _build_popup_field_labels(
+            field_schema, lang or settings.get("DEFAULT_LANG")
+        )
 
         return _render_place_html(
             geojson_entries,
@@ -1472,6 +1506,7 @@ def _process_content(
             attribution,
             images_dict,
             layer_field,
+            field_labels=popup_labels,
         )
 
     result = cast(str, pattern.sub(replace, content))

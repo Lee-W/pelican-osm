@@ -40,6 +40,7 @@ from pelican.plugins.osm.osm import (
     _render_place_html,
     _render_place_list_html,
     _resolve_group_count_template,
+    _build_popup_field_labels,
     _resolve_i18n_title,
     _resolve_schema_properties,
     _ShortcodePreserveExtension,
@@ -1911,6 +1912,26 @@ class TestRenderPlaceHtml:
         id2 = re.search(r'id="(osm-map-\d+)"', html2).group(1)
         assert id1 != id2
 
+    def test_field_labels_attribute_emitted_when_set(self):
+        html = _render_place_html(
+            [self._entry("/u.geojson")],
+            ["A"],
+            "400px",
+            TILE,
+            ATTR,
+            field_labels={"date": "日期", "category": "分類"},
+        )
+        m = re.search(r'data-osm-field-labels="([^"]*)"', html)
+        assert m is not None
+        payload = json.loads(m.group(1).replace("&quot;", '"').replace("&amp;", "&"))
+        assert payload == {"date": "日期", "category": "分類"}
+
+    def test_field_labels_attribute_omitted_when_empty(self):
+        html = _render_place_html(
+            [self._entry("/u.geojson")], ["A"], "400px", TILE, ATTR
+        )
+        assert "data-osm-field-labels" not in html
+
 
 # ---------------------------------------------------------------------------
 # _process_content
@@ -2612,6 +2633,36 @@ class TestResolveI18nTitle:
 
     def test_no_i18n_block_returns_none(self):
         assert _resolve_i18n_title({"title": "Hall"}, "en") is None
+
+
+class TestBuildPopupFieldLabels:
+    def test_uses_localized_title_when_present(self):
+        schema = {
+            "date": {
+                "title": "Date",
+                "x-osm-list-i18n": {"title": {"zh-tw": "日期"}},
+            },
+            "category": {"title": "Category"},
+        }
+        labels = _build_popup_field_labels(schema, "zh-tw")
+        assert labels == {"date": "日期", "category": "Category"}
+
+    def test_falls_back_to_plain_title_when_no_locale_match(self):
+        schema = {"date": {"title": "Date"}}
+        labels = _build_popup_field_labels(schema, "fr")
+        assert labels == {"date": "Date"}
+
+    def test_omits_fields_without_any_title(self):
+        # No title and no i18n → JS derives the label, so we don't bake
+        # anything into the data attribute.
+        schema = {"date": {"x-osm-list-sort": "min"}}
+        labels = _build_popup_field_labels(schema, "en")
+        assert labels == {}
+
+    def test_skips_non_dict_props(self):
+        schema = {"date": "not-a-dict", "category": {"title": "Category"}}
+        labels = _build_popup_field_labels(schema, "en")
+        assert labels == {"category": "Category"}
 
 
 class TestResolveGroupCountTemplate:

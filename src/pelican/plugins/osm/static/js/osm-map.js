@@ -145,13 +145,17 @@
     "urls",
   ]);
 
-  function fieldLabel(key) {
+  function fieldLabel(key, perMapLabels) {
+    // Precedence: schema-supplied per-map label (locale-aware, built at
+    // render time) > globally configured/built-in i18n.fieldLabels >
+    // derived from the field name itself.
+    if (perMapLabels && perMapLabels[key]) return perMapLabels[key];
     if (i18n.fieldLabels[key]) return i18n.fieldLabels[key];
     return key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ");
   }
 
   // ── Popup builder ─────────────────────────────────────────────
-  function buildPopupHtml(props, lat, lon, images) {
+  function buildPopupHtml(props, lat, lon, images, perMapLabels) {
     const tagBadges =
       Array.isArray(props.tags) && props.tags.length
         ? `<div class="osm-popup-tags">${props.tags
@@ -166,7 +170,7 @@
       .filter(([key]) => !HIDDEN_FIELDS.has(key))
       .map(
         ([key, value]) =>
-          `<div class="osm-popup-field"><span class="osm-popup-label">${esc(fieldLabel(key))}:</span> ${esc(value)}</div>`,
+          `<div class="osm-popup-field"><span class="osm-popup-label">${esc(fieldLabel(key, perMapLabels))}:</span> ${esc(value)}</div>`,
       )
       .join("");
 
@@ -247,7 +251,15 @@
   }
 
   // ── Add GeoJSON features to map ───────────────────────────────
-  function addFeatures(layer, features, fragment, markers, imagesMap, layerField) {
+  function addFeatures(
+    layer,
+    features,
+    fragment,
+    markers,
+    imagesMap,
+    layerField,
+    perMapLabels,
+  ) {
     for (const feature of features) {
       if (feature.geometry?.type !== "Point") continue;
       const props = feature.properties || {};
@@ -266,7 +278,7 @@
       marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
       marker._osmLayer = layerField ? (props[layerField] || null) : null;
       const images = imagesMap[placeKey] || [];
-      marker.bindPopup(buildPopupHtml(props, lat, lon, images), {
+      marker.bindPopup(buildPopupHtml(props, lat, lon, images, perMapLabels), {
         maxWidth: 280,
       });
       markers.push(marker);
@@ -618,13 +630,18 @@
     const attribution = el.getAttribute("data-attribution");
     const rawImages = el.getAttribute("data-images");
     const layerField = el.getAttribute("data-osm-layer-field") || null;
+    const rawFieldLabels = el.getAttribute("data-osm-field-labels");
 
     let entries;
     let imagesData = {};
+    let perMapLabels = null;
     try {
       entries = JSON.parse(rawEntries);
       if (rawImages) {
         imagesData = JSON.parse(rawImages);
+      }
+      if (rawFieldLabels) {
+        perMapLabels = JSON.parse(rawFieldLabels);
       }
     } catch (e) {
       console.error("pelican-osm: failed to parse attributes", e);
@@ -666,7 +683,15 @@
     for (const result of results) {
       if (result.status === "fulfilled") {
         const { fc, fragment } = result.value;
-        addFeatures(markerLayer, fc.features || [], fragment, markers, imagesData, layerField);
+        addFeatures(
+          markerLayer,
+          fc.features || [],
+          fragment,
+          markers,
+          imagesData,
+          layerField,
+          perMapLabels,
+        );
       } else {
         fetchErrors++;
         console.warn("pelican-osm: failed to fetch GeoJSON:", result.reason);
