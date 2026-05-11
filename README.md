@@ -540,6 +540,8 @@ window.OSM_I18N = {
 
 `fieldLabels` is shallow-merged — only list the keys you want to change.
 
+If you already declare per-field titles in your `_schema.yaml` via `title` and `x-osm-list-i18n.title.<lang>` (which the `place_list` table reads for column headers), those flow through to map popups automatically — no JS override needed. Precedence: schema-driven per-map label > `window.OSM_I18N.fieldLabels` > built-in language pack > capitalised key.
+
 ### Available i18n keys
 
 | Key | Default (en) | Description |
