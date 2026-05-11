@@ -1469,7 +1469,7 @@ class TestRenderPlaceListHtml:
         assert "<th>標籤</th>" in thead
         assert "<th>連結</th>" in thead
 
-    def test_images_row_gets_data_images_attr_and_icon(self):
+    def test_images_row_gets_class_icon_and_json_sidecar(self):
         places = [
             {
                 "name": "A",
@@ -1481,9 +1481,25 @@ class TestRenderPlaceListHtml:
         ]
         html = _render_place_list_html(places, [], {})
         assert "osm-has-images" in html
-        assert "data-images=" in html
         assert "osm-list-image-icon" in html
         assert "osm-list-image-col-header" in html
+        # Image URLs no longer live inside each <tr>; they ride in one
+        # JSON sidecar keyed by row slug, so big tables stay lean.
+        assert 'data-images="' not in html
+        assert '<script type="application/json" class="osm-list-images">' in html
+        sidecar = re.search(
+            r'<script type="application/json" class="osm-list-images">(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        assert sidecar is not None
+        payload = json.loads(sidecar.group(1))
+        assert payload == {"a": ["https://example.com/a.jpg"]}
+
+    def test_images_no_sidecar_when_no_rows_have_images(self):
+        places = [{"name": "A", "lat": 1.0, "lon": 2.0}]
+        html = _render_place_list_html(places, [], {})
+        assert "osm-list-images" not in html
 
     def test_images_no_indicator_without_images(self):
         places = [
