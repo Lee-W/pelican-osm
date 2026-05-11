@@ -74,6 +74,20 @@ def _slugify(value: str) -> str:
     return "".join(out).lower() or "group"
 
 
+def _place_anchor_slug(place: dict[str, Any]) -> str:
+    """Stable slug for a place's row/marker anchor.
+
+    Prefers ``id`` over ``name``. Returns an empty string when neither
+    yields a usable slug, so callers can skip emitting an anchor entirely.
+    Page-scoped uniqueness (e.g. items expansion or duplicate names) is the
+    caller's responsibility — this helper only computes the base slug.
+    """
+    raw = place.get("id") or place.get("name")
+    if raw is None or not str(raw).strip():
+        return ""
+    return _slugify(str(raw))
+
+
 def _is_place_yaml(path: Path) -> bool:
     """True if ``path`` is a place YAML (not a schema/private underscore file)."""
     return path.suffix in (".yml", ".yaml") and not path.name.startswith("_")
@@ -1098,28 +1112,62 @@ def _render_place_list_html(
             f"{render_map_links(place.get('lat'), place.get('lon'))}</td>"
         )
 
-    def _row_images_attr(row: dict[str, Any]) -> str:
-        """Return data-images attribute string + osm-has-images class for rows with images."""
+    used_row_ids: set[str] = set()
+
+    def _row_slug(row: dict[str, Any]) -> str:
+        base = _place_anchor_slug(row)
+        if not base:
+            return ""
+        slug = base
+        n = 2
+        while slug in used_row_ids:
+            slug = f"{base}-{n}"
+            n += 1
+        used_row_ids.add(slug)
+        return slug
+
+    def _row_attrs(row: dict[str, Any]) -> str:
+        """Compose ``<tr>`` attributes: anchor id, class, and data-images.
+
+        Anchor (``id="osm-place-<slug>"``) lets external links and map popups
+        deep-link to a specific row; ``data-osm-place-slug`` mirrors it so JS
+        can match a marker to its row without re-slugifying the place name.
+        """
+        slug = _row_slug(row)
+
         raw = row.get("images")
-        if not raw:
-            return ""
-        if isinstance(raw, str):
-            raw = [raw]
-        if not isinstance(raw, list):
-            return ""
-        resolved = [
-            _resolve_image_url(str(img), siteurl, None)
-            for img in raw
-            if img is not None
-        ]
-        if not resolved:
-            return ""
-        escaped = (
-            json.dumps(resolved, ensure_ascii=False)
-            .replace("&", "&amp;")
-            .replace('"', "&quot;")
-        )
-        return f' class="osm-has-images" data-images="{escaped}"'
+        images_attr = ""
+        has_imgs = False
+        if raw:
+            if isinstance(raw, str):
+                raw = [raw]
+            if isinstance(raw, list):
+                resolved = [
+                    _resolve_image_url(str(img), siteurl, None)
+                    for img in raw
+                    if img is not None
+                ]
+                if resolved:
+                    escaped = (
+                        json.dumps(resolved, ensure_ascii=False)
+                        .replace("&", "&amp;")
+                        .replace('"', "&quot;")
+                    )
+                    images_attr = f' data-images="{escaped}"'
+                    has_imgs = True
+
+        classes = ["osm-place-row"]
+        if has_imgs:
+            classes.append("osm-has-images")
+
+        parts = []
+        if slug:
+            parts.append(f' id="osm-place-{slug}"')
+        parts.append(f' class="{" ".join(classes)}"')
+        parts.append(images_attr)
+        if slug:
+            parts.append(f' data-osm-place-slug="{slug}"')
+        return "".join(parts)
 
     has_tags = any(row.get("tags") for row in rows) and not is_hidden("tags")
     has_url = any(row.get("urls") for row in rows) and not is_hidden("urls")
@@ -1175,7 +1223,7 @@ def _render_place_list_html(
                 cells.append('<td class="osm-list-image-icon">📷</td>')
             else:
                 cells.append("<td></td>")
-        return f"<tr{_row_images_attr(row)}>" + "".join(cells) + "</tr>"
+        return f"<tr{_row_attrs(row)}>" + "".join(cells) + "</tr>"
 
     rendered_rows: list[str] = []
     if group_summary_at:
@@ -1677,6 +1725,10 @@ def _place_to_feature(
 
     if "urls" in properties:
         properties["urls"] = _normalize_url_field(properties["urls"], article_url_map)
+
+    slug = _place_anchor_slug(place)
+    if slug:
+        properties["slug"] = slug
 
     return {
         "type": "Feature",

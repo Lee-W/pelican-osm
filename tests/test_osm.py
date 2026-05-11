@@ -487,11 +487,11 @@ class TestRenderPlaceListHtmlItems:
             }
         ]
         html = _render_place_list_html(places, [], {})
-        assert html.count("<tr>") == 3  # 2 rows + 1 header
+        assert html.count("<tr") == 3  # 2 data rows + 1 thead; data rows carry id/class
         assert "6 廳（TITAN）" in html
         assert "2 廳" in html
-        # Parent's name cascades to every row (one row per item).
-        assert html.count("松仁威秀") == 4  # data-sort-value and column value
+        # Parent's name cascades to every row's name cell (one row per item).
+        assert html.count('data-sort-value="松仁威秀"') == 2
 
     def test_group_summary_at_with_parent_field(self):
         places = [
@@ -519,7 +519,8 @@ class TestRenderPlaceListHtmlItems:
         )
         assert "TW" in html
         assert "JP" in html
-        assert html.count("<tr>") == 4
+        # 3 data rows (T1+H1, T1+H2, T2+H3), each with a row anchor.
+        assert html.count('id="osm-place-') == 3
 
     def test_items_field_not_a_column(self):
         places = [
@@ -1514,6 +1515,83 @@ class TestRenderPlaceListHtml:
 
 
 # ---------------------------------------------------------------------------
+# Row anchors (id="osm-place-<slug>") and slug in GeoJSON properties
+# ---------------------------------------------------------------------------
+
+
+class TestPlaceRowAnchors:
+    def test_row_carries_slugged_id(self):
+        places = [{"name": "A1", "lat": 1.0, "lon": 2.0}]
+        html = _render_place_list_html(places, [], {})
+        assert 'id="osm-place-a1"' in html
+        assert 'class="osm-place-row"' in html
+        assert 'data-osm-place-slug="a1"' in html
+
+    def test_id_field_wins_over_name(self):
+        places = [{"id": "stable-key", "name": "Pretty Name", "lat": 1.0, "lon": 2.0}]
+        html = _render_place_list_html(places, [], {})
+        assert 'id="osm-place-stable-key"' in html
+        assert "osm-place-pretty-name" not in html
+
+    def test_collision_appends_suffix(self):
+        # Two rows resolving to the same base slug must get distinct ids
+        # so the HTML stays valid and anchors deep-link to the right row.
+        places = [
+            {"name": "Same", "lat": 1.0, "lon": 2.0},
+            {"name": "Same", "lat": 3.0, "lon": 4.0},
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert 'id="osm-place-same"' in html
+        assert 'id="osm-place-same-2"' in html
+
+    def test_items_expansion_dedupes_anchors(self):
+        # _expand_items emits N rows sharing the parent's name; each row
+        # must still get a unique anchor.
+        places = [
+            {
+                "name": "Cinema",
+                "lat": 1.0,
+                "lon": 2.0,
+                "items": [{"hall": "H1"}, {"hall": "H2"}, {"hall": "H3"}],
+            }
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert 'id="osm-place-cinema"' in html
+        assert 'id="osm-place-cinema-2"' in html
+        assert 'id="osm-place-cinema-3"' in html
+
+    def test_row_class_combines_with_has_images(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "images": ["https://example.com/a.jpg"],
+            }
+        ]
+        html = _render_place_list_html(places, [], {})
+        assert 'class="osm-place-row osm-has-images"' in html
+
+    def test_geojson_includes_slug(self):
+        feat = _place_to_feature(
+            {"name": "豊島区立南池袋第二公園", "lat": 1.0, "lon": 2.0}
+        )
+        assert feat["properties"]["slug"] == "豊島区立南池袋第二公園"
+
+    def test_geojson_slug_prefers_id(self):
+        feat = _place_to_feature(
+            {"id": "south-park", "name": "South Park", "lat": 1.0, "lon": 2.0}
+        )
+        assert feat["properties"]["slug"] == "south-park"
+
+    def test_geojson_no_slug_when_name_blank(self):
+        # name="" fails _validate_place upstream, but defend the helper anyway
+        # so a malformed feature doesn't blow up the export.
+        feat = _place_to_feature({"name": "", "lat": 1.0, "lon": 2.0})
+        assert "slug" not in feat["properties"]
+
+
+# ---------------------------------------------------------------------------
 # _validate_place
 # ---------------------------------------------------------------------------
 
@@ -1852,7 +1930,7 @@ class TestProcessContent:
         assert "osm-place-list" in result
         tbody = re.search(r"<tbody>(.*?)</tbody>", result, re.DOTALL)
         assert tbody is not None
-        assert tbody.group(1).count("<tr>") == 3
+        assert tbody.group(1).count("<tr") == 3
 
     def test_place_list_group_summary_emits_header(self, resolver):
         content = '{% place_list japan group_by="anime" group_summary_at="anime" %}'
