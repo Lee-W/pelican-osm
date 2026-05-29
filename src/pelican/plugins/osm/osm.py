@@ -482,7 +482,7 @@ def _validate_place(place: dict[str, Any], source: str) -> bool:
     return True
 
 
-def _schema_filenames(settings: dict) -> list[str]:
+def _schema_filenames(settings: dict[str, Any]) -> list[str]:
     val = settings.get("OSM_VALIDATE_SCHEMA_FILENAMES")
     if val is None:
         return list(DEFAULT_SCHEMA_FILENAMES)
@@ -530,7 +530,7 @@ def _coerce_for_validation(value: Any) -> Any:
     return value
 
 
-def _validate_yaml_files(root: Path, settings: dict) -> None:
+def _validate_yaml_files(root: Path, settings: dict[str, Any]) -> None:
     """Validate every place YAML under ``root`` against any nearest-ancestor schema.
 
     Validation is presence-driven: files with no ancestor schema are skipped.
@@ -642,8 +642,8 @@ def _walk_schema_properties(schema: Any, out: dict[str, Any]) -> None:
 
 def _resolve_schema_properties(
     specs: list[str],
-    resolver: "PlaceResolver",
-    settings: dict,
+    resolver: PlaceResolver,
+    settings: dict[str, Any],
 ) -> dict[str, Any]:
     """Find and merge JSON schema ``properties`` for the given specs.
 
@@ -960,7 +960,7 @@ def _render_list_cell(
     return display, sort_value
 
 
-def _resolve_group_count_template(settings: dict, lang: str | None) -> str:
+def _resolve_group_count_template(settings: dict[str, Any], lang: str | None) -> str:
     """Pick the count-line template for ``group_summary_at`` headers.
 
     Precedence: explicit ``OSM_LIST_GROUP_COUNT_TEMPLATE`` setting wins (even
@@ -1410,7 +1410,7 @@ def _render_place_list_html(
 def _process_content(
     content: str,
     resolver: PlaceResolver,
-    settings: dict,
+    settings: dict[str, Any],
     lang: str | None = None,
 ) -> str:
     """Replace all {% place ... %} and {% place_list ... %} shortcodes in content.
@@ -1558,7 +1558,7 @@ def _process_content(
 
 
 _resolver: PlaceResolver | None = None
-_settings: dict = {}
+_settings: dict[str, Any] = {}
 _article_url_map: dict[str, str] = {}
 _content_path: Path | None = None
 
@@ -1625,7 +1625,7 @@ if _HAS_MARKDOWN:
             )
 
 
-def _register_markdown_extension(settings: dict) -> None:
+def _register_markdown_extension(settings: dict[str, Any]) -> None:
     """Append our shortcode-preserving Markdown extension to ``MARKDOWN``.
 
     No-op when ``markdown`` isn't installed (e.g., RST-only sites) or when
@@ -1653,7 +1653,7 @@ def _register_markdown_extension(settings: dict) -> None:
     extensions.append(_ShortcodePreserveExtension(shortcodes))
 
 
-def _init_resolver(pelican_obj) -> None:
+def _init_resolver(pelican_obj: Any) -> None:
     global _resolver, _settings, _article_url_map, _content_path
 
     # i18n_subsites fires signals.initialized for each language subsite using
@@ -1697,7 +1697,7 @@ def _init_resolver(pelican_obj) -> None:
         _validate_yaml_files(root, _settings)
 
 
-def _process_article(content) -> None:
+def _process_article(content: Any) -> None:
     if not isinstance(content, (Article, Page)):
         return
 
@@ -1731,7 +1731,7 @@ def _process_article(content) -> None:
         )
 
 
-def _build_article_url_map(pelican_obj) -> dict[str, str]:
+def _build_article_url_map(pelican_obj: Any) -> dict[str, str]:
     """Return a map of source_path → absolute URL for every article and page."""
     siteurl = pelican_obj.settings.get("SITEURL", "").rstrip("/")
     url_map: dict[str, str] = {}
@@ -1861,7 +1861,7 @@ def _yaml_to_geojson(
     }
 
 
-def _export_geojson(pelican_obj) -> None:
+def _export_geojson(pelican_obj: Any) -> None:
     """Convert every YAML under places root to a .geojson file in output/static/places/."""
     if _resolver is None:
         return
@@ -1887,7 +1887,7 @@ def _export_geojson(pelican_obj) -> None:
         log.debug("pelican-osm: wrote %s (%d features)", dest, len(geojson["features"]))
 
 
-def _copy_static(pelican_obj) -> None:
+def _copy_static(pelican_obj: Any) -> None:
     """Copy bundled static assets (JS/CSS) to output."""
     static_src = Path(__file__).parent / "static"
     output = Path(pelican_obj.settings.get("OUTPUT_PATH", "output"))
@@ -1900,7 +1900,7 @@ def _copy_static(pelican_obj) -> None:
         log.debug("pelican-osm: copied static assets to %s", dest)
 
 
-def register():
+def register() -> None:
     signals.initialized.connect(_init_resolver)
     signals.content_object_init.connect(_process_article)
     signals.finalized.connect(_copy_static)
