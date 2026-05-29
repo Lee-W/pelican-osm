@@ -63,7 +63,7 @@ repos:
     stages:
     - post-commit
   repo: https://github.com/commitizen-tools/commitizen
-  rev: v4.13.7
+  rev: v4.13.9
 - hooks:
   - id: taplo-format
   repo: https://github.com/ComPWA/taplo-pre-commit
