@@ -52,8 +52,8 @@ PLUGINS = ["pelican.plugins.osm"]
 ### 2. Add Leaflet.js and plugin assets to your base template
 
 ```html
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <!-- Plugin assets — auto-copied to output/static/pelican_osm/ on build -->
 <link rel="stylesheet" href="/static/pelican_osm/css/osm-map.css">
