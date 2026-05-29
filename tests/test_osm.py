@@ -21,6 +21,7 @@ import yaml
 from pelican.plugins.osm.osm import (
     PlaceResolver,
     _aggregate_field,
+    _build_popup_field_labels,
     _collapse_places,
     _expand_items,
     _export_geojson,
@@ -31,6 +32,7 @@ from pelican.plugins.osm.osm import (
     _is_place_yaml,
     _load_yaml_file,
     _merge_place,
+    _normalize_url_field,
     _parse_aggregate_kwarg,
     _parse_csv_kwarg,
     _parse_shortcode_args,
@@ -40,12 +42,14 @@ from pelican.plugins.osm.osm import (
     _render_place_html,
     _render_place_list_html,
     _resolve_group_count_template,
-    _build_popup_field_labels,
     _resolve_i18n_title,
+    _resolve_image_url,
     _resolve_schema_properties,
+    _safe_url,
     _ShortcodePreserveExtension,
     _validate_place,
     _validate_yaml_files,
+    _walk_schema_properties,
     _yaml_to_geojson,
 )
 
@@ -2888,3 +2892,69 @@ class TestRegisterMarkdownExtension:
         exts = settings["MARKDOWN"]["extensions"]
         assert "markdown.extensions.extra" in exts
         assert any(isinstance(e, _ShortcodePreserveExtension) for e in exts)
+
+
+# ---------------------------------------------------------------------------
+# _safe_url
+# ---------------------------------------------------------------------------
+
+
+class TestSafeUrl:
+    # --- allowed schemes ---
+
+    def test_https_url_allowed(self):
+        assert _safe_url("https://example.com") == "https://example.com"
+
+    def test_http_url_allowed(self):
+        assert _safe_url("http://example.com") == "http://example.com"
+
+    def test_mailto_allowed(self):
+        assert _safe_url("mailto:user@example.com") == "mailto:user@example.com"
+
+    def test_tel_allowed(self):
+        assert _safe_url("tel:+81-3-1234-5678") == "tel:+81-3-1234-5678"
+
+    def test_absolute_path_allowed(self):
+        assert _safe_url("/static/images/photo.jpg") == "/static/images/photo.jpg"
+
+    def test_relative_path_allowed(self):
+        assert _safe_url("./images/photo.jpg") == "./images/photo.jpg"
+
+    def test_fragment_allowed(self):
+        assert _safe_url("#section-1") == "#section-1"
+
+    def test_query_string_allowed(self):
+        assert _safe_url("?q=search") == "?q=search"
+
+    # --- blocked schemes ---
+
+    def test_javascript_blocked(self):
+        assert _safe_url("javascript:alert(1)") == "#"
+
+    def test_data_uri_blocked(self):
+        assert _safe_url("data:text/html,<h1>XSS</h1>") == "#"
+
+    def test_vbscript_blocked(self):
+        assert _safe_url("vbscript:msgbox(1)") == "#"
+
+    def test_javascript_mixed_case_blocked(self):
+        # verifies re.IGNORECASE is in effect
+        assert _safe_url("JaVaScRiPt:alert(1)") == "#"
+
+    def test_javascript_uppercase_blocked(self):
+        assert _safe_url("JAVASCRIPT:alert(1)") == "#"
+
+    # --- edge cases ---
+
+    def test_none_returns_hash(self):
+        assert _safe_url(None) == "#"
+
+    def test_empty_string_returns_hash(self):
+        assert _safe_url("") == "#"
+
+    def test_whitespace_only_returns_hash(self):
+        assert _safe_url("   ") == "#"
+
+    def test_non_string_truthy_value(self):
+        # str() conversion: integer 42 → "42", not a known scheme → "#"
+        assert _safe_url(42) == "#"
