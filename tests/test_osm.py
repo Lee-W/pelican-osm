@@ -18,10 +18,9 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from pelican import signals
 
 import pelican.plugins.osm.osm as osm_module
-
+from pelican import signals
 from pelican.plugins.osm.osm import (
     PlaceResolver,
     _aggregate_field,
