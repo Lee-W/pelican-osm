@@ -2958,3 +2958,61 @@ class TestSafeUrl:
     def test_non_string_truthy_value(self):
         # str() conversion: integer 42 → "42", not a known scheme → "#"
         assert _safe_url(42) == "#"
+
+
+# ---------------------------------------------------------------------------
+# _normalize_url_field
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeUrlField:
+    def test_plain_string_returns_single_entry_no_label(self):
+        result = _normalize_url_field("https://example.com", None)
+        assert result == [{"label": None, "href": "https://example.com"}]
+
+    def test_single_dict_with_label_and_href(self):
+        result = _normalize_url_field(
+            {"label": "Blog", "href": "https://example.com"}, None
+        )
+        assert result == [{"label": "Blog", "href": "https://example.com"}]
+
+    def test_single_dict_missing_label(self):
+        result = _normalize_url_field({"href": "https://example.com"}, None)
+        assert result == [{"label": None, "href": "https://example.com"}]
+
+    def test_list_of_dicts(self):
+        result = _normalize_url_field(
+            [
+                {"label": "2023", "href": "https://example.com/2023"},
+                {"label": "2024", "href": "https://example.com/2024"},
+            ],
+            None,
+        )
+        assert len(result) == 2
+        assert result[0] == {"label": "2023", "href": "https://example.com/2023"}
+        assert result[1] == {"label": "2024", "href": "https://example.com/2024"}
+
+    def test_article_url_map_none_preserves_href_as_is(self):
+        raw = "{filename}posts/my-post.md"
+        result = _normalize_url_field(raw, None)
+        assert result == [{"label": None, "href": raw}]
+
+    def test_filename_resolved_when_map_provided(self):
+        url_map = {"posts/my-post.md": "https://example.com/posts/my-post/"}
+        result = _normalize_url_field("{filename}posts/my-post.md", url_map)
+        assert result == [{"label": None, "href": "https://example.com/posts/my-post/"}]
+
+    def test_filename_in_dict_href_resolved(self):
+        url_map = {"posts/visit.md": "https://example.com/posts/visit/"}
+        result = _normalize_url_field(
+            {"label": "Visit", "href": "{filename}posts/visit.md"}, url_map
+        )
+        assert result == [{"label": "Visit", "href": "https://example.com/posts/visit/"}]
+
+    def test_none_input_returns_empty_list(self):
+        assert _normalize_url_field(None, None) == []
+
+    def test_list_with_invalid_item_skipped(self):
+        # integers in the list are not string or dict → skipped
+        result = _normalize_url_field([42, {"href": "https://example.com"}], None)
+        assert result == [{"label": None, "href": "https://example.com"}]
