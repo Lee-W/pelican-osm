@@ -3016,3 +3016,53 @@ class TestNormalizeUrlField:
         # integers in the list are not string or dict → skipped
         result = _normalize_url_field([42, {"href": "https://example.com"}], None)
         assert result == [{"label": None, "href": "https://example.com"}]
+
+
+# ---------------------------------------------------------------------------
+# _resolve_image_url
+# ---------------------------------------------------------------------------
+
+
+class TestResolveImageUrl:
+    def test_https_url_returned_as_is(self):
+        assert (
+            _resolve_image_url("https://example.com/img.jpg", "https://mysite.com")
+            == "https://example.com/img.jpg"
+        )
+
+    def test_http_url_returned_as_is(self):
+        assert (
+            _resolve_image_url("http://example.com/img.jpg", "https://mysite.com")
+            == "http://example.com/img.jpg"
+        )
+
+    def test_absolute_path_prepends_siteurl(self):
+        assert (
+            _resolve_image_url("/static/images/photo.jpg", "https://mysite.com")
+            == "https://mysite.com/static/images/photo.jpg"
+        )
+
+    def test_relative_path_prepends_siteurl_with_slash(self):
+        assert (
+            _resolve_image_url("images/photo.jpg", "https://mysite.com")
+            == "https://mysite.com/images/photo.jpg"
+        )
+
+    def test_siteurl_trailing_slash_normalized(self):
+        # siteurl with trailing slash should not produce double slash
+        assert (
+            _resolve_image_url("/static/img.jpg", "https://mysite.com/")
+            == "https://mysite.com/static/img.jpg"
+        )
+
+    def test_siteurl_trailing_slash_normalized_relative(self):
+        assert (
+            _resolve_image_url("images/photo.jpg", "https://mysite.com/")
+            == "https://mysite.com/images/photo.jpg"
+        )
+
+    def test_subsite_siteurl(self):
+        assert (
+            _resolve_image_url("images/photo.jpg", "https://mysite.com/blog")
+            == "https://mysite.com/blog/images/photo.jpg"
+        )
