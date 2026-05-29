@@ -9,6 +9,7 @@ import logging
 import re
 import shlex
 import shutil
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -1315,8 +1316,6 @@ def _render_place_list_html(
 
     rendered_rows: list[str] = []
     if group_summary_at:
-        from collections import defaultdict
-
         # Pre-compute place counts at every prefix depth so each header can
         # display its own subtotal (e.g. country total → city total → district
         # total) regardless of how many descendant rows it spans.
