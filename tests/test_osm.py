@@ -14,21 +14,27 @@ import datetime
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
+from pelican import signals
+
+import pelican.plugins.osm.osm as osm_module
 
 from pelican.plugins.osm.osm import (
     PlaceResolver,
     _aggregate_field,
     _build_popup_field_labels,
     _collapse_places,
+    _copy_static,
     _expand_items,
     _export_geojson,
     _extract_year,
     _extract_years,
     _find_schema_for,
     _geojson_url,
+    _init_resolver,
     _is_place_yaml,
     _load_yaml_file,
     _merge_place,
@@ -37,6 +43,7 @@ from pelican.plugins.osm.osm import (
     _parse_csv_kwarg,
     _parse_shortcode_args,
     _place_to_feature,
+    _process_article,
     _process_content,
     _register_markdown_extension,
     _render_place_html,
@@ -51,6 +58,7 @@ from pelican.plugins.osm.osm import (
     _validate_yaml_files,
     _walk_schema_properties,
     _yaml_to_geojson,
+    register,
 )
 
 DEFAULT_SETTINGS = {
@@ -3175,3 +3183,96 @@ class TestWalkSchemaProperties:
         _walk_schema_properties(schema, out)
         assert "visited" in out
         assert out["visited"]["title"] == "Visited"
+
+
+# ---------------------------------------------------------------------------
+# Signal handler integration tests
+# ---------------------------------------------------------------------------
+# These tests exercise the Pelican signal handlers that read/write module-level
+# globals (_resolver, _settings, _article_url_map, _content_path).  The
+# autouse fixture below saves and restores those globals around every test so
+# parallel runs (pytest-xdist --dist=loadfile) cannot pollute each other.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _restore_osm_globals():
+    """Save and restore osm module globals around each test."""
+    saved_resolver = osm_module._resolver
+    saved_settings = osm_module._settings
+    saved_url_map = osm_module._article_url_map
+    saved_content_path = osm_module._content_path
+    yield
+    osm_module._resolver = saved_resolver
+    osm_module._settings = saved_settings
+    osm_module._article_url_map = saved_url_map
+    osm_module._content_path = saved_content_path
+
+
+# ---------------------------------------------------------------------------
+# register
+# ---------------------------------------------------------------------------
+
+
+class TestRegister:
+    def test_connects_four_signals(self, monkeypatch):
+        connected: dict[str, list] = {
+            "initialized": [],
+            "content_object_init": [],
+            "finalized": [],
+        }
+
+        monkeypatch.setattr(
+            signals.initialized,
+            "connect",
+            lambda fn: connected["initialized"].append(fn),
+        )
+        monkeypatch.setattr(
+            signals.content_object_init,
+            "connect",
+            lambda fn: connected["content_object_init"].append(fn),
+        )
+        monkeypatch.setattr(
+            signals.finalized,
+            "connect",
+            lambda fn: connected["finalized"].append(fn),
+        )
+
+        register()
+
+        assert _init_resolver in connected["initialized"]
+        assert _process_article in connected["content_object_init"]
+        assert _copy_static in connected["finalized"]
+        assert _export_geojson in connected["finalized"]
+
+
+# ---------------------------------------------------------------------------
+# _copy_static
+# ---------------------------------------------------------------------------
+
+
+class TestCopyStatic:
+    def _make_pelican_obj(self, output_path: str) -> SimpleNamespace:
+        return SimpleNamespace(settings={"OUTPUT_PATH": output_path})
+
+    def test_copies_bundled_static_to_output(self, tmp_path):
+        pelican_obj = self._make_pelican_obj(str(tmp_path))
+        _copy_static(pelican_obj)
+
+        dest = tmp_path / "static" / "pelican_osm"
+        assert dest.exists()
+        # bundled assets include css/ and js/ subdirectories
+        assert (dest / "css").exists()
+        assert (dest / "js").exists()
+
+    def test_overwrites_existing_dest(self, tmp_path):
+        dest = tmp_path / "static" / "pelican_osm"
+        dest.mkdir(parents=True)
+        (dest / "stale_file.txt").write_text("old")
+
+        pelican_obj = self._make_pelican_obj(str(tmp_path))
+        _copy_static(pelican_obj)
+
+        # stale file should be gone (rmtree + copytree)
+        assert not (dest / "stale_file.txt").exists()
+        assert (dest / "css").exists()
