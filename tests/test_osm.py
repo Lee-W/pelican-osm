@@ -3276,3 +3276,162 @@ class TestCopyStatic:
         # stale file should be gone (rmtree + copytree)
         assert not (dest / "stale_file.txt").exists()
         assert (dest / "css").exists()
+
+
+# ---------------------------------------------------------------------------
+# _init_resolver
+# ---------------------------------------------------------------------------
+
+
+def _make_pelican(settings: dict) -> SimpleNamespace:
+    """Build a minimal fake Pelican object with the given settings dict."""
+    return SimpleNamespace(settings=settings)
+
+
+class TestInitResolver:
+    def test_sets_resolver_and_settings(self, tmp_path):
+        places = tmp_path / "places"
+        places.mkdir()
+        pelican_obj = _make_pelican(
+            {
+                "PATH": str(tmp_path),
+                "OSM_PLACES_ROOT": str(places),
+                "SITEURL": "https://example.com",
+            }
+        )
+        _init_resolver(pelican_obj)
+
+        assert osm_module._resolver is not None
+        assert osm_module._settings is pelican_obj.settings
+        assert osm_module._content_path == tmp_path
+
+    def test_relative_path_resolved(self, tmp_path):
+        """Relative PATH is resolved against cwd (no pelicanconf key)."""
+        import os
+
+        orig_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            places = tmp_path / "places"
+            places.mkdir()
+            pelican_obj = _make_pelican(
+                {
+                    "PATH": ".",
+                    "OSM_PLACES_ROOT": str(places),
+                    "SITEURL": "https://example.com",
+                }
+            )
+            _init_resolver(pelican_obj)
+            assert osm_module._content_path == tmp_path
+        finally:
+            os.chdir(orig_cwd)
+
+    def test_subsite_siteurl_does_not_reset_url_map(self, tmp_path):
+        """When new SITEURL extends old one, _article_url_map is NOT cleared."""
+        places = tmp_path / "places"
+        places.mkdir()
+        # Prime module globals with a main-site state
+        osm_module._settings = {"SITEURL": "https://example.com"}
+        osm_module._article_url_map = {"posts/a.md": "https://example.com/a/"}
+
+        subsite_obj = _make_pelican(
+            {
+                "PATH": str(tmp_path),
+                "OSM_PLACES_ROOT": str(places),
+                "SITEURL": "https://example.com/en",
+            }
+        )
+        _init_resolver(subsite_obj)
+
+        # URL map must still contain the main-site entry
+        assert "posts/a.md" in osm_module._article_url_map
+
+    def test_non_subsite_clears_url_map(self, tmp_path):
+        """A completely different SITEURL resets the URL map."""
+        places = tmp_path / "places"
+        places.mkdir()
+        osm_module._settings = {"SITEURL": "https://old.example.com"}
+        osm_module._article_url_map = {"posts/a.md": "https://old.example.com/a/"}
+
+        new_obj = _make_pelican(
+            {
+                "PATH": str(tmp_path),
+                "OSM_PLACES_ROOT": str(places),
+                "SITEURL": "https://new.example.com",
+            }
+        )
+        _init_resolver(new_obj)
+
+        assert osm_module._article_url_map == {}
+
+
+# ---------------------------------------------------------------------------
+# _process_article
+# ---------------------------------------------------------------------------
+
+
+class TestProcessArticle:
+    def _setup_resolver(self, tmp_path):
+        """Prime module globals so _process_article can run."""
+        places = tmp_path / "places"
+        places.mkdir()
+        osm_module._resolver = PlaceResolver(places)
+        osm_module._settings = {
+            "SITEURL": "https://example.com",
+            "OSM_SHORTCODE": "place",
+            "OSM_MAP_HEIGHT": "400px",
+            "OSM_MAP_TILE": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+            "OSM_MAP_ATTRIBUTION": "&copy; OpenStreetMap contributors",
+            "OSM_STATIC_PREFIX": "/static",
+        }
+        osm_module._article_url_map = {}
+        osm_module._content_path = tmp_path
+
+    def test_non_article_page_is_ignored(self, tmp_path):
+        self._setup_resolver(tmp_path)
+        initial_map = dict(osm_module._article_url_map)
+        _process_article(SimpleNamespace())  # not Article or Page
+        assert osm_module._article_url_map == initial_map
+
+    def _make_fake_article(self, src, url, content="<p>Hello</p>"):
+        """Build a SimpleNamespace that passes isinstance via osm_module.Article patch."""
+
+        class FakeArticle:
+            pass
+
+        obj = FakeArticle()
+        obj.source_path = src  # type: ignore[attr-defined]
+        obj.url = url  # type: ignore[attr-defined]
+        obj.lang = "en"  # type: ignore[attr-defined]
+        obj._content = content  # type: ignore[attr-defined]
+        return obj
+
+    def test_article_url_accumulated(self, tmp_path, monkeypatch):
+        self._setup_resolver(tmp_path)
+        src = str(tmp_path / "posts" / "my-post.md")
+        article = self._make_fake_article(src, "posts/my-post/")
+
+        # Patch the Article/Page names inside osm_module so isinstance passes
+        monkeypatch.setattr(osm_module, "Article", type(article))
+        monkeypatch.setattr(osm_module, "Page", type(None))
+
+        _process_article(article)
+
+        # URL map should have the article's src → absolute URL
+        assert src in osm_module._article_url_map
+        assert osm_module._article_url_map[src] == "https://example.com/posts/my-post/"
+
+    def test_setdefault_first_write_wins(self, tmp_path, monkeypatch):
+        """Second call with same src must NOT overwrite existing URL."""
+        self._setup_resolver(tmp_path)
+        src = str(tmp_path / "posts" / "my-post.md")
+        osm_module._article_url_map[src] = "https://example.com/canonical/"
+
+        article = self._make_fake_article(src, "posts/fallback/")
+        monkeypatch.setattr(osm_module, "Article", type(article))
+        monkeypatch.setattr(osm_module, "Page", type(None))
+
+        _process_article(article)
+
+        # canonical URL must not be overwritten
+        assert osm_module._article_url_map[src] == "https://example.com/canonical/"
