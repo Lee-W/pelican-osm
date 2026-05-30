@@ -1,3 +1,9 @@
+## 0.13.1 (2026-05-30)
+
+### Refactor
+
+- hoist defaultdict import to module top
+
 ## 0.13.0 (2026-05-11)
 
 ### Feat
