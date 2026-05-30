@@ -3066,3 +3066,112 @@ class TestResolveImageUrl:
             _resolve_image_url("images/photo.jpg", "https://mysite.com/blog")
             == "https://mysite.com/blog/images/photo.jpg"
         )
+
+
+# ---------------------------------------------------------------------------
+# _walk_schema_properties
+# ---------------------------------------------------------------------------
+
+
+class TestWalkSchemaProperties:
+    def test_locations_based_schema(self):
+        """properties.locations.items.properties.* collected."""
+        schema = {
+            "properties": {
+                "locations": {
+                    "items": {
+                        "properties": {
+                            "name": {"title": "Name", "type": "string"},
+                            "category": {"title": "Category", "type": "string"},
+                        }
+                    }
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        assert "name" in out
+        assert "category" in out
+        assert out["name"]["title"] == "Name"
+
+    def test_dict_of_places_schema(self):
+        """additionalProperties.properties.* collected."""
+        schema = {
+            "additionalProperties": {
+                "properties": {
+                    "name": {"title": "Name"},
+                    "lat": {"title": "Latitude"},
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        assert "name" in out
+        assert "lat" in out
+
+    def test_bare_list_schema(self):
+        """items.properties.* collected."""
+        schema = {
+            "items": {
+                "properties": {
+                    "name": {"title": "Place Name"},
+                    "date": {"title": "Date"},
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        assert "name" in out
+        assert "date" in out
+
+    def test_item_level_overrides_parent_level(self):
+        """Deeper item-level properties win over outer properties of same name."""
+        schema = {
+            "properties": {
+                # outer-level "name" property — collected first
+                "name": {"title": "Outer Name", "x-osm-list-hidden": False},
+                "locations": {
+                    "items": {
+                        "properties": {
+                            # inner item-level "name" — collected later, overrides
+                            "name": {"title": "Inner Name", "x-osm-list-hidden": True},
+                        }
+                    }
+                },
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        # item-level (inner) must win
+        assert out["name"]["title"] == "Inner Name"
+        assert out["name"]["x-osm-list-hidden"] is True
+
+    def test_non_dict_schema_is_noop(self):
+        out: dict = {}
+        _walk_schema_properties(None, out)
+        _walk_schema_properties("not a dict", out)
+        _walk_schema_properties([], out)
+        assert out == {}
+
+    def test_empty_schema_is_noop(self):
+        out: dict = {}
+        _walk_schema_properties({}, out)
+        assert out == {}
+
+    def test_nested_items_in_properties(self):
+        """properties.items.items.properties.* (bare list with nested items)."""
+        schema = {
+            "properties": {
+                "items": {
+                    "items": {
+                        "properties": {
+                            "visited": {"title": "Visited", "type": "boolean"},
+                        }
+                    }
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        assert "visited" in out
+        assert out["visited"]["title"] == "Visited"
