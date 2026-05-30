@@ -3399,10 +3399,10 @@ class TestProcessArticle:
             pass
 
         obj = FakeArticle()
-        obj.source_path = src  # type: ignore[attr-defined]
-        obj.url = url  # type: ignore[attr-defined]
-        obj.lang = "en"  # type: ignore[attr-defined]
-        obj._content = content  # type: ignore[attr-defined]
+        obj.source_path = src
+        obj.url = url
+        obj.lang = "en"
+        obj._content = content
         return obj
 
     def test_article_url_accumulated(self, tmp_path, monkeypatch):
