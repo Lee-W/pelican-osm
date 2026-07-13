@@ -42,7 +42,10 @@ DEFAULT_LIST_SHORTCODE = "place_list"
 DEFAULT_PLACES_ROOT = "places"  # relative to Pelican's PATH (content dir)
 DEFAULT_MAP_HEIGHT = "400px"
 DEFAULT_MAP_TILE = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-DEFAULT_MAP_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+DEFAULT_MAP_ATTRIBUTION = (
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+    "contributors"
+)
 DEFAULT_SCHEMA_FILENAMES = ("_schema.yaml", "_schema.yml", "_schema.json")
 # Template for the count line under each group_summary_at header. ``{n}`` is
 # replaced with the number of original places in the group. Override via
@@ -1171,9 +1174,11 @@ def _render_place_list_html(
         gmaps_url = f"https://maps.google.com/?q={lat},{lon}"
         return (
             f'<span class="osm-list-map-links">'
-            f'<a href="{osm_url}" target="_blank" rel="noopener" title="OpenStreetMap">🗺️</a>'
+            f'<a href="{osm_url}" target="_blank" rel="noopener" '
+            f'title="OpenStreetMap">🗺️</a>'
             f'<span class="osm-list-map-sep" aria-hidden="true">·</span>'
-            f'<a href="{gmaps_url}" target="_blank" rel="noopener" title="Google Maps">📍</a>'
+            f'<a href="{gmaps_url}" target="_blank" rel="noopener" '
+            f'title="Google Maps">📍</a>'
             f"</span>"
         )
 
@@ -1371,7 +1376,8 @@ def _render_place_list_html(
                     f'<td colspan="{col_count}">'
                     f'<span class="osm-group-header-toggle"'
                     f' aria-hidden="true">▾</span>'
-                    f'<strong class="osm-group-header-title">{html.escape(title)}</strong>'
+                    f'<strong class="osm-group-header-title">'
+                    f"{html.escape(title)}</strong>"
                     f"{count_html}"
                     f"{map_links_html}"
                     f"</td></tr>"
@@ -1862,7 +1868,10 @@ def _yaml_to_geojson(
 
 
 def _export_geojson(pelican_obj: Any) -> None:
-    """Convert every YAML under places root to a .geojson file in output/static/places/."""
+    """Convert every YAML under places root to a .geojson file in output/static/places/.
+
+    Written relative to the site's output directory.
+    """
     if _resolver is None:
         return
 
