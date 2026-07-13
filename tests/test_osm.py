@@ -242,7 +242,8 @@ class TestLoadYamlFile:
 
         yml = tmp_path / "test.yml"
         yml.write_text(
-            "locations:\n  - name: A\n    lat: 1.0\n    lon: 2.0\n    date: 2026-02-22\n",
+            "locations:\n  - name: A\n    lat: 1.0\n    lon: 2.0\n"
+            "    date: 2026-02-22\n",
             encoding="utf-8",
         )
         places = _load_yaml_file(yml)
@@ -493,14 +494,14 @@ class TestRenderPlaceListHtmlItems:
                 "lon": 121.56,
                 "country": "TW",
                 "items": [
-                    {"hall": "6 廳（TITAN）", "rows": "G"},
+                    {"hall": "6 廳（TITAN）", "rows": "G"},  # noqa: RUF001
                     {"hall": "2 廳", "rows": "E"},
                 ],
             }
         ]
         html = _render_place_list_html(places, [], {})
         assert html.count("<tr") == 3  # 2 data rows + 1 thead; data rows carry id/class
-        assert "6 廳（TITAN）" in html
+        assert "6 廳（TITAN）" in html  # noqa: RUF001
         assert "2 廳" in html
         # Parent's name cascades to every row's name cell (one row per item).
         assert html.count('data-sort-value="松仁威秀"') == 2
@@ -2208,7 +2209,8 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            settings = {"OUTPUT_PATH": str(output)}
+            def __init__(self):
+                self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
             _export_geojson(FakePelican())
@@ -2232,7 +2234,8 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            settings = {"OUTPUT_PATH": str(output)}
+            def __init__(self):
+                self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
             _export_geojson(FakePelican())
@@ -2257,7 +2260,8 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            settings = {"OUTPUT_PATH": str(output)}
+            def __init__(self):
+                self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
             _export_geojson(FakePelican())
@@ -2554,7 +2558,8 @@ class TestResolveSchemaProperties:
         assert merged["anime"]["title"] == "作品"
 
     def test_dict_of_places_schema_extracts_per_place_props(self, tmp_path):
-        # Theater shape: {additionalProperties: {properties: ..., items: {items: {...}}}}
+        # Theater shape:
+        # {additionalProperties: {properties: ..., items: {items: {...}}}}
         schema = {
             "type": "object",
             "additionalProperties": {
@@ -3393,7 +3398,9 @@ class TestProcessArticle:
         assert osm_module._article_url_map == initial_map
 
     def _make_fake_article(self, src, url, content="<p>Hello</p>"):
-        """Build a SimpleNamespace that passes isinstance via osm_module.Article patch."""
+        """Build a SimpleNamespace that passes isinstance via osm_module.Article
+        patch.
+        """
 
         class FakeArticle:
             pass
