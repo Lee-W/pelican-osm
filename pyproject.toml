@@ -102,7 +102,7 @@ test.help = "Run the test suite"
 test.cmd = "pytest -n auto --dist=loadfile"
 
 cover.help = "Run the test suite with coverage"
-cover.ref = "test --cov-report term-missing --cov-report=xml:coverage.xml --cov=commitizen  --junitxml=junit.xml -o junit_family=legacy"
+cover.ref = "test --cov-report term-missing --cov-report=xml:coverage.xml --junitxml=junit.xml -o junit_family=legacy"
 
 all.help = "Run all tasks"
 all.sequence = ["format", "lint", "check-commit", "cover"]
