@@ -26,6 +26,9 @@ classifiers = [
 
 dependencies = ["pyyaml>=6.0", "pelican>=4.5"]
 
+[project.urls]
+Homepage = "https://github.com/Lee-W/pelican-osm"
+
 [project.optional-dependencies]
 validate = ["jsonschema>=4"]
 
