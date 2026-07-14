@@ -20,7 +20,7 @@ import pytest
 import yaml
 
 import pelican.plugins.osm.osm as osm_module
-from pelican import signals
+from pelican import signals  # type: ignore[attr-defined]
 from pelican.plugins.osm.osm import (
     PlaceResolver,
     _aggregate_field,
