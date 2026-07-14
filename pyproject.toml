@@ -71,6 +71,8 @@ module-root = "src"
 
 [tool.mypy]
 files = ["src", "tests"]
+explicit_package_bases = true
+mypy_path = "src"
 disallow_untyped_decorators = true
 disallow_subclassing_any = true
 warn_return_any = true

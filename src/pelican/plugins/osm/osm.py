@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import yaml
 from pelican.contents import Article, Page
 
-from pelican import signals
+from pelican import signals  # type: ignore[attr-defined]
 
 try:
     import jsonschema
