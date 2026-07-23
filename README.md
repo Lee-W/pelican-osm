@@ -280,6 +280,47 @@ Want to record multiple visits to the same place? Just write the field as a list
 
 The cell joins to `2024-01-15, 2025-03-12`. With `x-osm-list-sort: max`, sorting "Date" descending puts your most-recent visit first.
 
+## Marker icons
+
+Map pins can show an emoji instead of the default Leaflet pin. Precedence: per-place `icon:` field (override) > schema `x-osm-icon` category lookup > default pin.
+
+`x-osm-icon` is a schema hint declared on the field you categorize places by (e.g. `category`); its value is a `{category value: emoji}` map:
+
+```yaml
+# content/places/food/_schema.yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: object
+properties:
+  locations:
+    type: array
+    items:
+      type: object
+      properties:
+        category:
+          type: string
+          x-osm-icon:
+            ramen: 🍜
+            cafe: ☕
+```
+
+```yaml
+# content/places/food/kyoto.yaml
+locations:
+  - name: 拉麵店
+    lat: 35.0
+    lon: 135.7
+    category: ramen   # → 🍜 pin, resolved via x-osm-icon
+  - name: 特別的店
+    lat: 35.1
+    lon: 135.8
+    category: ramen
+    icon: 🎪           # per-place override wins over the schema mapping
+```
+
+If the place's category value isn't in the `x-osm-icon` map (or the place has neither an `icon:` field nor a matching category), the pin falls back to the default Leaflet marker — nothing crashes, nothing is required.
+
+Marker icons only affect `{% place %}` map pins; `{% place_list %}` table columns are unaffected (`icon` is never auto-detected as a column).
+
 ## Place fields
 
 | Field | Required | Notes |
@@ -290,6 +331,7 @@ The cell joins to `2024-01-15, 2025-03-12`. With `x-osm-list-sort: max`, sorting
 | `tags` | — | List — rendered as inline badges in the popup |
 | `images` | — | List — rendered as a photo gallery in the popup |
 | `urls` | — | List — rendered as links in the popup and list table; see below |
+| `icon` | — | Emoji shown as the map marker for this place. Overrides any `x-osm-icon` schema mapping. See [Marker icons](#marker-icons). |
 | *(any)* | — | All other fields shown as `Key: Value` lines |
 
 OSM and Google Maps links are **always auto-generated** from `lat`/`lon`.
@@ -329,6 +371,8 @@ content/places/taiwan.yml        →   output/static/places/taiwan.geojson
 ```
 
 The GeoJSON files are standard [RFC 7946](https://datatracker.ietf.org/doc/html/rfc7946) and can be used with any GeoJSON-compatible tool (QGIS, Mapbox, etc.).
+
+Feature properties may include an internal `_osm_icon` key — the computed final marker icon (see [Marker icons](#marker-icons)). It's derived at export time; you don't need to (and shouldn't) write this key directly in your YAML.
 
 ## Configuration
 

@@ -1393,6 +1393,19 @@ class TestRenderPlaceListHtml:
         assert "internal" not in thead.lower()
         assert "city" in thead.lower() or "City" in thead
 
+    def test_icon_field_excluded_from_auto_detected_columns(self):
+        places = [
+            {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "icon": "🍜"},
+        ]
+        html = _render_place_list_html(
+            places,
+            [],  # auto-detect, no OSM_LIST_FIELDS configured
+            {},
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "icon" not in thead.lower()
+        assert "city" in thead.lower() or "City" in thead
+
     def test_hidden_field_excluded_from_explicit_fields(self):
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "internal": "x"},
@@ -2146,6 +2159,39 @@ class TestPlaceToFeature:
         )
         assert feature["properties"]["tags"] == ["已歇業"]
 
+    def test_per_place_icon_override(self):
+        feature = _place_to_feature({"name": "A", "lat": 1.0, "lon": 2.0, "icon": "🎪"})
+        assert feature["properties"]["_osm_icon"] == "🎪"
+        assert "icon" not in feature["properties"]
+
+    def test_schema_derived_icon(self):
+        feature = _place_to_feature(
+            {"name": "A", "lat": 1.0, "lon": 2.0, "category": "ramen"},
+            field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
+        )
+        assert feature["properties"]["_osm_icon"] == "🍜"
+
+    def test_category_value_not_in_icon_map(self):
+        feature = _place_to_feature(
+            {"name": "A", "lat": 1.0, "lon": 2.0, "category": "sushi"},
+            field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
+        )
+        assert "_osm_icon" not in feature["properties"]
+
+    def test_place_missing_category_field_no_crash(self):
+        feature = _place_to_feature(
+            {"name": "A", "lat": 1.0, "lon": 2.0},
+            field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
+        )
+        assert "_osm_icon" not in feature["properties"]
+
+    def test_per_place_icon_wins_over_schema(self):
+        feature = _place_to_feature(
+            {"name": "A", "lat": 1.0, "lon": 2.0, "icon": "🎪", "category": "ramen"},
+            field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
+        )
+        assert feature["properties"]["_osm_icon"] == "🎪"
+
 
 # ---------------------------------------------------------------------------
 # _yaml_to_geojson
@@ -2190,6 +2236,19 @@ class TestYamlToGeojson:
         serialized = json.dumps(fc)
         assert "2026-02-22" in serialized
         assert "2026-03-15" in serialized
+
+    def test_field_schema_propagates_to_icon(self, tmp_path):
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "locations:\n"
+            "  - name: A\n    lat: 1.0\n    lon: 2.0\n    category: ramen\n",
+            encoding="utf-8",
+        )
+        fc = _yaml_to_geojson(
+            yml,
+            field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
+        )
+        assert fc["features"][0]["properties"]["_osm_icon"] == "🍜"
 
 
 # ---------------------------------------------------------------------------
@@ -2271,6 +2330,141 @@ class TestExportGeojson:
         # japan/mygo.yaml → static/places/japan/mygo.geojson (not .yaml)
         assert (output / "static" / "places" / "japan" / "mygo.geojson").exists()
         assert not (output / "static" / "places" / "japan" / "mygo.yaml").exists()
+
+    def test_schema_x_osm_icon_resolved_into_geojson(self, tmp_path):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_schema.yaml").write_text(
+            yaml.dump(
+                {
+                    "properties": {
+                        "locations": {
+                            "items": {
+                                "properties": {
+                                    "category": {
+                                        "x-osm-icon": {"ramen": "🍜", "cafe": "☕"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "food.yaml").write_text(
+            yaml.dump(
+                {
+                    "locations": [
+                        {"name": "A", "lat": 1.0, "lon": 2.0, "category": "ramen"},
+                        {"name": "B", "lat": 3.0, "lon": 4.0, "category": "unknown"},
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        output = tmp_path / "output"
+        output.mkdir()
+
+        import pelican.plugins.osm.osm as osm_mod
+
+        orig, orig_s = osm_mod._resolver, osm_mod._settings
+        osm_mod._resolver = PlaceResolver(root)
+        osm_mod._settings = {}
+
+        class FakePelican:
+            def __init__(self):
+                self.settings = {"OUTPUT_PATH": str(output)}
+
+        try:
+            _export_geojson(FakePelican())
+        finally:
+            osm_mod._resolver, osm_mod._settings = orig, orig_s
+
+        fc = json.loads(
+            (output / "static" / "places" / "food.geojson").read_text(encoding="utf-8")
+        )
+        by_name = {f["properties"]["name"]: f["properties"] for f in fc["features"]}
+        # Category resolves via schema x-osm-icon lookup.
+        assert by_name["A"]["_osm_icon"] == "🍜"
+        # Category not present in the map → no icon, no crash.
+        assert "_osm_icon" not in by_name["B"]
+
+    def test_schema_cache_loads_shared_schema_once(self, tmp_path, monkeypatch):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_schema.yaml").write_text(
+            yaml.dump(
+                {
+                    "properties": {
+                        "locations": {
+                            "items": {
+                                "properties": {
+                                    "category": {"x-osm-icon": {"ramen": "🍜"}}
+                                }
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        for i in range(3):
+            (root / f"food{i}.yaml").write_text(
+                yaml.dump(
+                    {
+                        "locations": [
+                            {
+                                "name": f"P{i}",
+                                "lat": 1.0,
+                                "lon": 2.0,
+                                "category": "ramen",
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        output = tmp_path / "output"
+        output.mkdir()
+
+        import pelican.plugins.osm.osm as osm_mod
+
+        orig, orig_s = osm_mod._resolver, osm_mod._settings
+        osm_mod._resolver = PlaceResolver(root)
+        osm_mod._settings = {}
+
+        # Spy on `yaml.safe_load`, filtered to calls whose stream is the
+        # schema file specifically — `_load_yaml_file` also calls
+        # `yaml.safe_load` for each place YAML, and `_walk_schema_properties`
+        # recurses internally without re-reading the file, so counting raw
+        # call totals would over- or under-count. Identifying the schema
+        # stream by name isolates exactly what the cache is meant to avoid:
+        # re-reading `_schema.yaml` once per YAML file that shares it.
+        schema_path = root / "_schema.yaml"
+        orig_safe_load = yaml.safe_load
+        call_count = {"n": 0}
+
+        def counting_safe_load(stream):
+            if getattr(stream, "name", None) == str(schema_path):
+                call_count["n"] += 1
+            return orig_safe_load(stream)
+
+        monkeypatch.setattr(osm_mod.yaml, "safe_load", counting_safe_load)
+
+        class FakePelican:
+            def __init__(self):
+                self.settings = {"OUTPUT_PATH": str(output)}
+
+        try:
+            _export_geojson(FakePelican())
+        finally:
+            osm_mod._resolver, osm_mod._settings = orig, orig_s
+
+        # Schema is loaded once and cached, regardless of 3 YAML files sharing it.
+        assert call_count["n"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3019,7 +3213,9 @@ class TestNormalizeUrlField:
         result = _normalize_url_field(
             {"label": "Visit", "href": "{filename}posts/visit.md"}, url_map
         )
-        assert result == [{"label": "Visit", "href": "https://example.com/posts/visit/"}]
+        assert result == [
+            {"label": "Visit", "href": "https://example.com/posts/visit/"}
+        ]
 
     def test_none_input_returns_empty_list(self):
         assert _normalize_url_field(None, None) == []
@@ -3164,6 +3360,24 @@ class TestWalkSchemaProperties:
         _walk_schema_properties("not a dict", out)
         _walk_schema_properties([], out)
         assert out == {}
+
+    def test_x_osm_icon_dict_value_preserved_without_recursion(self):
+        """A dict-valued `x-osm-icon` hint must survive untouched — it's not
+        a nested schema, so `_walk_schema_properties`'s recursion into
+        properties/items/additionalProperties must not treat it as one."""
+        schema = {
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "x-osm-icon": {"ramen": "🍜", "cafe": "☕"},
+                },
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        assert out["category"]["x-osm-icon"] == {"ramen": "🍜", "cafe": "☕"}
+        # No spurious keys leaked in from misinterpreting the icon map.
+        assert set(out.keys()) == {"category"}
 
     def test_empty_schema_is_noop(self):
         out: dict = {}

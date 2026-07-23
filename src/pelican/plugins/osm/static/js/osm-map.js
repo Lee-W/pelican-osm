@@ -143,6 +143,7 @@
     "tags",
     "images",
     "urls",
+    "_osm_icon",
   ]);
 
   function fieldLabel(key, perMapLabels) {
@@ -270,7 +271,18 @@
         continue;
 
       const [lon, lat] = feature.geometry.coordinates;
-      const marker = L.marker([lat, lon]).addTo(layer);
+      const marker = props._osm_icon
+        ? L.marker([lat, lon], {
+            icon: L.divIcon({
+              html: `<span class="osm-marker-icon">${esc(props._osm_icon)}</span>`,
+              className: "osm-marker-icon-wrapper",
+              iconSize: [28, 28],
+              iconAnchor: [14, 28],
+              popupAnchor: [0, -28],
+            }),
+          })
+        : L.marker([lat, lon]);
+      marker.addTo(layer);
       const placeKey = props.id || props.name;
       marker._osmPlaceId = props.id || null;
       marker._osmPlaceName = props.name;
