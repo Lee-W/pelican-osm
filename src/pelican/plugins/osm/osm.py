@@ -78,6 +78,7 @@ _LIST_RESERVED = frozenset(
         "_places",
         "_item_slug_parts",
         "items",
+        "icon",  # map/popup marker icon only, not a table column
     ]
 )
 
@@ -1814,15 +1815,50 @@ def _normalize_url_field(
     return [entry] if entry is not None else []
 
 
+def _resolve_marker_icon(
+    place: dict[str, Any], field_schema: dict[str, Any] | None
+) -> str | None:
+    """Resolve the emoji marker icon for a place.
+
+    Precedence: per-place ``icon`` field (override) > schema-driven
+    ``x-osm-icon`` category lookup > no icon (caller falls back to the
+    default Leaflet pin).
+    """
+    icon = place.get("icon")
+    if isinstance(icon, str) and icon:
+        return icon
+
+    if not field_schema:
+        return None
+
+    category_field = None
+    icon_map = None
+    for field, props in field_schema.items():
+        if isinstance(props, dict) and isinstance(props.get("x-osm-icon"), dict):
+            category_field = field
+            icon_map = props["x-osm-icon"]
+            break
+    if category_field is None or icon_map is None:
+        return None
+
+    place_value = place.get(category_field)
+    if not isinstance(place_value, str):
+        return None
+
+    resolved = icon_map.get(place_value)
+    return resolved if isinstance(resolved, str) and resolved else None
+
+
 def _place_to_feature(
     place: dict[str, Any],
     article_url_map: dict[str, str] | None = None,
+    field_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert a single place dict to a GeoJSON Feature."""
 
     properties = {}
     for k, v in place.items():
-        if k in ("lat", "lon", "images", "items"):
+        if k in ("lat", "lon", "images", "items", "icon"):
             continue
         if v == "" or v == [] or v is None:
             continue
@@ -1844,6 +1880,10 @@ def _place_to_feature(
     if slug:
         properties["slug"] = slug
 
+    icon = _resolve_marker_icon(place, field_schema)
+    if icon:
+        properties["_osm_icon"] = icon
+
     return {
         "type": "Feature",
         "geometry": {
@@ -1857,13 +1897,16 @@ def _place_to_feature(
 def _yaml_to_geojson(
     yaml_path: Path,
     article_url_map: dict[str, str] | None = None,
+    field_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load a YAML file and return a GeoJSON FeatureCollection."""
     places = _load_yaml_file(yaml_path)
     valid = [p for p in places if _validate_place(p, str(yaml_path))]
     return {
         "type": "FeatureCollection",
-        "features": [_place_to_feature(p, article_url_map) for p in valid],
+        "features": [
+            _place_to_feature(p, article_url_map, field_schema) for p in valid
+        ],
     }
 
 
@@ -1883,12 +1926,39 @@ def _export_geojson(pelican_obj: Any) -> None:
 
     yaml_files = sorted(f for f in root.rglob("*") if _is_place_yaml(f))
 
+    schema_names = _schema_filenames(pelican_obj.settings)
+    # Cache the fully-walked `field_schema` per schema path (not the raw
+    # schema, unlike `_validate_yaml_files`'s `schema_cache`) — export only
+    # ever needs the post-`_walk_schema_properties` result, so each schema
+    # file is loaded and walked at most once no matter how many YAML files
+    # share it.
+    field_schema_cache: dict[Path, dict[str, Any]] = {}
+
     for yaml_path in yaml_files:
         rel = yaml_path.relative_to(root)
         dest = output / "static" / "places" / rel.with_suffix(".geojson")
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        geojson = _yaml_to_geojson(yaml_path, _article_url_map)
+        schema_path = _find_schema_for(yaml_path, root, schema_names)
+        if schema_path is None:
+            field_schema: dict[str, Any] = {}
+        else:
+            if schema_path not in field_schema_cache:
+                try:
+                    with open(schema_path, encoding="utf-8") as f:
+                        schema = yaml.safe_load(f)
+                except (OSError, yaml.YAMLError) as e:
+                    log.warning(
+                        "pelican-osm: cannot load schema %s: %s", schema_path, e
+                    )
+                    schema = None
+                walked: dict[str, Any] = {}
+                if schema is not None:
+                    _walk_schema_properties(schema, walked)
+                field_schema_cache[schema_path] = walked
+            field_schema = field_schema_cache[schema_path]
+
+        geojson = _yaml_to_geojson(yaml_path, _article_url_map, field_schema)
         dest.write_text(
             json.dumps(geojson, ensure_ascii=False, indent=2),
             encoding="utf-8",

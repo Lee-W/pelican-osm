@@ -103,6 +103,12 @@
   --osm-popup-color: #333;
   --osm-popup-shadow: 0 3px 14px rgba(0, 0, 0, 0.4);
   --osm-popup-name-color: inherit;
+
+  /* Emoji marker icon (per-place `icon:` / schema `x-osm-icon`) */
+  --osm-marker-icon-size: 28px;
+  --osm-marker-icon-bg: #fff;
+  --osm-marker-icon-border: 2px solid #fff;
+  --osm-marker-icon-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 /* --------------------------------------------------------------------------
@@ -128,6 +134,35 @@
   background: var(--osm-map-bg);
   display: block;
   position: relative;
+}
+
+/* --------------------------------------------------------------------------
+   Emoji marker icon
+   Built as a Leaflet divIcon (see osm-map.js addFeatures) when a place
+   resolves an `_osm_icon` property. `.leaflet-div-icon` ships a white
+   box + border by default; reset it here so `.osm-marker-icon-wrapper`
+   owns the visuals instead.
+   -------------------------------------------------------------------------- */
+.osm-marker-icon-wrapper.leaflet-div-icon {
+  background: transparent;
+  border: none;
+}
+
+.osm-marker-icon-wrapper {
+  width: var(--osm-marker-icon-size);
+  height: var(--osm-marker-icon-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--osm-marker-icon-bg);
+  border: var(--osm-marker-icon-border);
+  border-radius: 50%;
+  box-shadow: var(--osm-marker-icon-shadow);
+}
+
+.osm-marker-icon {
+  font-size: calc(var(--osm-marker-icon-size) * 0.6);
+  line-height: 1;
 }
 
 /* --------------------------------------------------------------------------
