@@ -1,3 +1,13 @@
+## 0.14.0 (2026-07-24)
+
+### Feat
+
+- support emoji icon pins for place markers
+
+### Fix
+
+- resolve mypy duplicate-module error surfaced by py.typed marker
+
 ## 0.13.1 (2026-05-30)
 
 ### Refactor
