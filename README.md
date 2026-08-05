@@ -453,6 +453,67 @@ Unquoted dates (`date: 2026-02-22`) are normalized to ISO 8601 strings before va
 
 By default, validation failures are logged as warnings. Set `OSM_VALIDATE_STRICT = True` to raise a `RuntimeError` and fail the build instead.
 
+### Sharing definitions across schemas with `$ref`
+
+Most place schemas share a large common core — `name`, `lat`, `lon`, `city`, `country`, `date`, `tags`, `urls`, and so on — with only a handful of fields differing per category. Rather than repeating that core in every `_schema.yaml`, factor it into one shared file and reference it with `$ref`:
+
+```yaml
+# content/places/_common.yaml — not a schema by itself, just a $defs library
+$defs:
+  base_location:
+    type: object
+    required: [name, lat, lon]
+    properties:
+      name:    {type: string, minLength: 1, title: "名稱"}
+      lat:     {type: number, minimum: -90,  maximum: 90}
+      lon:     {type: number, minimum: -180, maximum: 180}
+      country: {type: string}
+      city:    {type: string}
+      date:    {type: string, format: date}
+      tags:    {type: array, items: {type: string}}
+```
+
+```yaml
+# content/places/pilgrimage/_schema.yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+type: object
+required: [anime, locations]
+properties:
+  anime: {type: string}
+  locations:
+    type: array
+    items:
+      allOf:
+        - $ref: "../_common.yaml#/$defs/base_location"
+      properties:
+        # fields specific to pilgrimage locations
+        category: {type: string, title: "分類"}
+        notes:    {type: string}
+```
+
+Both reference forms are supported:
+
+- **Same-file**: `$ref: "#/$defs/base_location"` — resolves within the current schema document.
+- **Cross-file**: `$ref: "../_common.yaml#/$defs/base_location"` — the file part is resolved **relative to the directory of the schema file containing the `$ref`**, not the place YAML being validated.
+
+`$ref` can appear either wrapped in `allOf` (as above — the conventional way to combine a reference with sibling keywords under JSON Schema before 2020-12) or directly alongside `properties` at the same level, per [2020-12](https://json-schema.org/draft/2020-12)'s relaxed `$ref` rules:
+
+```yaml
+items:
+  $ref: "../_common.yaml#/$defs/base_location"
+  properties:
+    category: {type: string}
+```
+
+Either way, fields pulled in via `$ref` are treated as the outer/shared layer: if the referencing schema also declares a `properties` entry with the same name, its version wins. This is what makes "shared defaults, per-category override" work — e.g. a category-specific schema can `$ref` the common `name` field but override its `title` for a locale-specific label. `allOf`/`anyOf`/`oneOf` are all walked, so `$ref` works inside any of them.
+
+This affects both places `$ref` is used:
+
+- **Display hints** (`title`, `x-osm-list-hidden`, `x-osm-list-sort`, `x-osm-list-i18n`, `x-osm-icon`) collected for `place_list` columns — resolved fully, including across files.
+- **Validation** — `jsonschema.validate` needs `$ref` targets to actually resolve; the plugin wires up a [`referencing`](https://github.com/python-jsonschema/referencing) registry (a transitive dependency of `jsonschema>=4.18`, so no extra install is needed) so cross-file relative refs work the same way here as they do for display hints.
+
+A broken `$ref` (missing file, unresolvable pointer, or a reference cycle) is logged as a warning and skipped — it never crashes the build.
+
 ## Deep linking
 
 Link directly to a specific place by appending its `id` or `name` as a URL hash:

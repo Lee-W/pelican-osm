@@ -12,7 +12,7 @@ import shutil
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import yaml
 from pelican.contents import Article, Page
@@ -22,9 +22,22 @@ from pelican import signals  # type: ignore[attr-defined]
 try:
     import jsonschema
 
+    # `referencing` is a hard (non-extra) dependency of `jsonschema>=4.18`,
+    # so it's always importable whenever `jsonschema` itself is. It's what
+    # lets `$ref` resolve across separate schema files (see
+    # `_build_schema_validator` and `_schema_ref_retriever` below).
+    import referencing
+    import referencing.exceptions
+    from referencing import Registry, Resource
+    from referencing.jsonschema import DRAFT202012
+
     _HAS_JSONSCHEMA = True
 except ImportError:
     jsonschema = None  # type: ignore[assignment]
+    referencing = None  # type: ignore[assignment]
+    Registry = None  # type: ignore[assignment, misc]
+    Resource = None  # type: ignore[assignment, misc]
+    DRAFT202012 = None  # type: ignore[assignment]
     _HAS_JSONSCHEMA = False
 
 try:
@@ -534,6 +547,62 @@ def _coerce_for_validation(value: Any) -> Any:
     return value
 
 
+def _schema_ref_retriever(uri: str) -> Any:
+    """`referencing` retrieve callback: load a schema document from a ``file://`` URI.
+
+    Any error raised here (missing file, bad YAML) propagates out of this
+    function; `referencing` catches it internally and wraps it into
+    ``referencing.exceptions.Unretrievable`` (itself a subclass of
+    ``Unresolvable``), which callers of the resulting validator must catch
+    alongside ``jsonschema.exceptions.ValidationError``.
+    """
+    path = Path(unquote(urlparse(uri).path))
+    with open(path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    return Resource.from_contents(doc, default_specification=DRAFT202012)
+
+
+def _build_schema_validator(
+    schema_path: Path, registry: Any, errors: list[str]
+) -> Any | None:
+    """Load ``schema_path`` and build a jsonschema validator with ``$ref`` support.
+
+    A ``referencing.Registry`` is threaded through so a relative ``$ref`` inside
+    the schema (e.g. ``../_common.yaml#/$defs/base``) resolves against the
+    schema file's own directory: the loaded schema is tagged with a synthetic
+    ``$id`` set to its own ``file://`` URI, which `referencing` uses as the
+    base for resolving relative refs.
+
+    Returns ``None`` if the schema file can't be loaded/parsed — logged as an
+    error but *not* appended to ``errors``, so it doesn't fail strict mode
+    (matches the pre-``$ref`` behaviour, where an unreadable schema file was
+    silently skipped). A schema that fails its own meta-schema check *is*
+    appended to ``errors``, also matching prior behaviour.
+    """
+    try:
+        with open(schema_path, encoding="utf-8") as f:
+            schema = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError) as e:
+        log.error("pelican-osm: cannot load schema %s: %s", schema_path, e)
+        return None
+    if not isinstance(schema, dict):
+        return None
+
+    schema_with_id = {**schema, "$id": schema_path.resolve().as_uri()}
+    validator_cls = jsonschema.validators.validator_for(schema_with_id)
+    try:
+        validator_cls.check_schema(schema_with_id)
+    except jsonschema.exceptions.SchemaError as e:
+        msg = f"invalid schema {schema_path}: {e.message}"
+        log.error("pelican-osm: %s", msg)
+        errors.append(msg)
+        return None
+
+    return validator_cls(
+        schema_with_id, registry=registry, format_checker=jsonschema.FormatChecker()
+    )
+
+
 def _validate_yaml_files(root: Path, settings: dict[str, Any]) -> None:
     """Validate every place YAML under ``root`` against any nearest-ancestor schema.
 
@@ -562,19 +631,25 @@ def _validate_yaml_files(root: Path, settings: dict[str, Any]) -> None:
         )
         return
 
-    schema_cache: dict[Path, Any] = {}
+    # `referencing.Registry` is an `attrs`-generated class, but it's built via
+    # a wrapper decorator (`referencing._attrs.frozen`) re-exported under a
+    # different module path than `attrs.frozen` itself — mypy's built-in
+    # attrs support only recognizes the latter, so it can't see the
+    # generated `__init__` and falls back to `object.__init__`, wrongly
+    # flagging every keyword argument here. Verified this is a `referencing`
+    # typing gap, not a mistake in this call: `inspect.signature` at runtime
+    # confirms `retrieve` is a real, valid keyword argument.
+    registry = Registry(retrieve=_schema_ref_retriever)  # type: ignore[call-arg]
+    validator_cache: dict[Path, Any] = {}
     errors: list[str] = []
 
     for yaml_path, schema_path in pairs:
-        if schema_path not in schema_cache:
-            try:
-                with open(schema_path, encoding="utf-8") as f:
-                    schema_cache[schema_path] = yaml.safe_load(f)
-            except (OSError, yaml.YAMLError) as e:
-                log.error("pelican-osm: cannot load schema %s: %s", schema_path, e)
-                schema_cache[schema_path] = None
-        schema = schema_cache[schema_path]
-        if schema is None:
+        if schema_path not in validator_cache:
+            validator_cache[schema_path] = _build_schema_validator(
+                schema_path, registry, errors
+            )
+        validator = validator_cache[schema_path]
+        if validator is None:
             continue
 
         try:
@@ -587,19 +662,15 @@ def _validate_yaml_files(root: Path, settings: dict[str, Any]) -> None:
             continue
 
         try:
-            jsonschema.validate(
-                _coerce_for_validation(data),
-                schema,
-                format_checker=jsonschema.FormatChecker(),
-            )
-        except jsonschema.exceptions.SchemaError as e:
-            msg = f"invalid schema {schema_path}: {e.message}"
-            log.error("pelican-osm: %s", msg)
-            errors.append(msg)
+            validator.validate(_coerce_for_validation(data))
         except jsonschema.exceptions.ValidationError as e:
             path_str = "/".join(str(p) for p in e.absolute_path) or "<root>"
             msg = f"{yaml_path}: {e.message} (at {path_str})"
             log.warning("pelican-osm schema validation: %s", msg)
+            errors.append(msg)
+        except referencing.exceptions.Unresolvable as e:
+            msg = f"{yaml_path}: cannot resolve $ref in schema {schema_path}: {e}"
+            log.error("pelican-osm: %s", msg)
             errors.append(msg)
 
     if errors and strict:
@@ -609,7 +680,109 @@ def _validate_yaml_files(root: Path, settings: dict[str, Any]) -> None:
         )
 
 
-def _walk_schema_properties(schema: Any, out: dict[str, Any]) -> None:
+def _load_schema_doc(path: Path, cache: dict[Path, Any]) -> Any:
+    """Load and cache a schema YAML/JSON document by its resolved absolute path.
+
+    Returns ``None`` (after logging a warning) on read or parse failure so
+    callers can degrade gracefully instead of crashing the build.
+    """
+    if path not in cache:
+        try:
+            with open(path, encoding="utf-8") as f:
+                cache[path] = yaml.safe_load(f)
+        except (OSError, yaml.YAMLError) as e:
+            log.warning("pelican-osm: cannot load referenced schema %s: %s", path, e)
+            cache[path] = None
+    return cache[path]
+
+
+def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
+    """Resolve an RFC 6901 JSON Pointer (without the leading ``#``) against ``doc``.
+
+    An empty pointer returns the whole document. Returns ``None`` if any
+    segment can't be found.
+    """
+    if not pointer:
+        return doc
+    node = doc
+    for raw_part in pointer.lstrip("/").split("/"):
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict):
+            if part not in node:
+                return None
+            node = node[part]
+        elif isinstance(node, list):
+            try:
+                idx = int(part)
+            except ValueError:
+                return None
+            if idx < 0 or idx >= len(node):
+                return None
+            node = node[idx]
+        else:
+            return None
+    return node
+
+
+def _resolve_schema_ref(
+    ref: str,
+    schema_dir: Path | None,
+    root_doc: Any,
+    current_file: Path | None,
+    doc_cache: dict[Path, Any],
+) -> tuple[Any, Any, Path | None, Path | None, str] | None:
+    """Resolve a ``$ref`` string used by `_walk_schema_properties`.
+
+    Supports a same-document JSON Pointer (``#/$defs/base``) and a cross-file
+    reference (``../_common.yaml#/$defs/base``), the latter resolved relative
+    to ``schema_dir`` (the directory of the schema file that *contains* the
+    ``$ref``, not necessarily the top-level schema file).
+
+    Returns ``(target_schema, new_root_doc, new_schema_dir, new_current_file,
+    pointer)`` — the last two carried forward so a nested ``$ref`` inside the
+    resolved target keeps resolving relative paths correctly — or ``None``
+    (after logging a warning) if the file or pointer can't be resolved.
+    """
+    file_part, _sep, pointer = ref.partition("#")
+
+    if file_part:
+        if schema_dir is None:
+            log.warning(
+                "pelican-osm: cannot resolve cross-file $ref %r without "
+                "knowing the containing schema file's location",
+                ref,
+            )
+            return None
+        target_path = (schema_dir / file_part).resolve()
+        target_doc = _load_schema_doc(target_path, doc_cache)
+        if target_doc is None:
+            return None
+        new_root_doc = target_doc
+        new_dir: Path | None = target_path.parent
+        new_file: Path | None = target_path
+    else:
+        new_root_doc = root_doc
+        new_dir = schema_dir
+        new_file = current_file
+
+    target = _resolve_json_pointer(new_root_doc, pointer)
+    if not isinstance(target, dict):
+        log.warning("pelican-osm: cannot resolve $ref %r", ref)
+        return None
+
+    return target, new_root_doc, new_dir, new_file, pointer
+
+
+def _walk_schema_properties(
+    schema: Any,
+    out: dict[str, Any],
+    *,
+    schema_dir: Path | None = None,
+    root_doc: Any = None,
+    current_file: Path | None = None,
+    doc_cache: dict[Path, Any] | None = None,
+    visited: set[tuple[str, str]] | None = None,
+) -> None:
     """Walk a JSON schema and collect every per-property entry that could
     describe a place field, regardless of which YAML shape the schema models.
 
@@ -619,13 +792,72 @@ def _walk_schema_properties(schema: Any, out: dict[str, Any]) -> None:
       * **bare list / nested items**: ``items.properties.*`` and
         ``properties.items.items.properties.*``
 
-    Outer fields are collected first, then deeper fields override them — so an
-    item-level ``title`` or ``x-osm-list-hidden`` wins over a parent-level
+    Also resolves ``$ref`` (same-document ``#/$defs/...`` pointers and
+    cross-file ``../other.yaml#/$defs/...`` references, the latter needing
+    ``schema_dir`` — the directory of the schema file being walked — to
+    resolve relative paths) and walks into ``allOf``/``anyOf``/``oneOf``,
+    since ``$ref`` is conventionally combined with one of those. A ``$ref``
+    can also sit alongside ``properties`` at the same level.
+
+    Outer fields are collected first, then deeper fields override them — so
+    an item-level ``title`` or ``x-osm-list-hidden`` wins over a parent-level
     entry of the same name, matching the row-merge precedence in
-    ``_expand_items``.
+    ``_expand_items``. A ``$ref``-introduced definition counts as *outer*:
+    it's walked before this node's own ``properties``/``items``/
+    ``additionalProperties``, so the referencing schema's own fields win —
+    this is what makes "shared defaults + local override" work.
+
+    Cycle protection: each ``$ref`` visited during one recursive walk is
+    tracked in ``visited`` (keyed by resolved file + JSON pointer) and
+    removed once that branch finishes, so a genuine cycle (A refs B refs A)
+    is caught but a diamond (A and B both ref C) is not a false positive.
     """
     if not isinstance(schema, dict):
         return
+
+    if root_doc is None:
+        root_doc = schema
+    if doc_cache is None:
+        doc_cache = {}
+    if visited is None:
+        visited = set()
+
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        resolved = _resolve_schema_ref(
+            ref, schema_dir, root_doc, current_file, doc_cache
+        )
+        if resolved is not None:
+            target, new_root_doc, new_dir, new_file, pointer = resolved
+            key = (str(new_file) if new_file is not None else "<inline>", pointer)
+            if key in visited:
+                log.warning("pelican-osm: circular $ref detected: %s", ref)
+            else:
+                visited.add(key)
+                _walk_schema_properties(
+                    target,
+                    out,
+                    schema_dir=new_dir,
+                    root_doc=new_root_doc,
+                    current_file=new_file,
+                    doc_cache=doc_cache,
+                    visited=visited,
+                )
+                visited.discard(key)
+
+    for combinator in ("allOf", "anyOf", "oneOf"):
+        subs = schema.get(combinator)
+        if isinstance(subs, list):
+            for sub in subs:
+                _walk_schema_properties(
+                    sub,
+                    out,
+                    schema_dir=schema_dir,
+                    root_doc=root_doc,
+                    current_file=current_file,
+                    doc_cache=doc_cache,
+                    visited=visited,
+                )
 
     props = schema.get("properties")
     if isinstance(props, dict):
@@ -633,15 +865,39 @@ def _walk_schema_properties(schema: Any, out: dict[str, Any]) -> None:
             if isinstance(v, dict):
                 out[k] = v
         for v in props.values():
-            _walk_schema_properties(v, out)
+            _walk_schema_properties(
+                v,
+                out,
+                schema_dir=schema_dir,
+                root_doc=root_doc,
+                current_file=current_file,
+                doc_cache=doc_cache,
+                visited=visited,
+            )
 
     item = schema.get("items")
     if isinstance(item, dict):
-        _walk_schema_properties(item, out)
+        _walk_schema_properties(
+            item,
+            out,
+            schema_dir=schema_dir,
+            root_doc=root_doc,
+            current_file=current_file,
+            doc_cache=doc_cache,
+            visited=visited,
+        )
 
     ap = schema.get("additionalProperties")
     if isinstance(ap, dict):
-        _walk_schema_properties(ap, out)
+        _walk_schema_properties(
+            ap,
+            out,
+            schema_dir=schema_dir,
+            root_doc=root_doc,
+            current_file=current_file,
+            doc_cache=doc_cache,
+            visited=visited,
+        )
 
 
 def _resolve_schema_properties(
@@ -671,8 +927,11 @@ def _resolve_schema_properties(
                 seen[sp] = {}
 
     merged: dict[str, Any] = {}
-    for sch in seen.values():
-        _walk_schema_properties(sch, merged)
+    doc_cache: dict[Path, Any] = dict(seen)
+    for sp, sch in seen.items():
+        _walk_schema_properties(
+            sch, merged, schema_dir=sp.parent, current_file=sp, doc_cache=doc_cache
+        )
     return merged
 
 
@@ -1931,8 +2190,11 @@ def _export_geojson(pelican_obj: Any) -> None:
     # schema, unlike `_validate_yaml_files`'s `schema_cache`) — export only
     # ever needs the post-`_walk_schema_properties` result, so each schema
     # file is loaded and walked at most once no matter how many YAML files
-    # share it.
+    # share it. `ref_doc_cache` is shared across all schema files so a
+    # `$ref`-ed common definitions file is only read once even when multiple
+    # sibling schemas reference it.
     field_schema_cache: dict[Path, dict[str, Any]] = {}
+    ref_doc_cache: dict[Path, Any] = {}
 
     for yaml_path in yaml_files:
         rel = yaml_path.relative_to(root)
@@ -1954,7 +2216,13 @@ def _export_geojson(pelican_obj: Any) -> None:
                     schema = None
                 walked: dict[str, Any] = {}
                 if schema is not None:
-                    _walk_schema_properties(schema, walked)
+                    _walk_schema_properties(
+                        schema,
+                        walked,
+                        schema_dir=schema_path.parent,
+                        current_file=schema_path,
+                        doc_cache=ref_doc_cache,
+                    )
                 field_schema_cache[schema_path] = walked
             field_schema = field_schema_cache[schema_path]
 

@@ -2705,6 +2705,121 @@ class TestValidateYamlFiles:
 
         assert any("invalid schema" in r.message for r in caplog.records)
 
+    # -- $ref support -------------------------------------------------
+    #
+    # PoC finding: `jsonschema.validate(data, schema, ...)` alone raises
+    # `_WrappedReferencingError: Unresolvable` for any cross-file `$ref`
+    # (confirmed by hand before implementing) — modern `jsonschema` (>=4.18)
+    # needs an explicit `referencing.Registry` plus a base URI (via a
+    # synthetic `$id` set to the schema file's own `file://` URI) to resolve
+    # relative refs to sibling files. `_build_schema_validator` wires this
+    # up; these tests exercise the resulting validator end to end.
+
+    def test_cross_file_ref_valid_data_passes(self, tmp_path, caplog):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_common.yaml").write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base_location": {
+                            "type": "object",
+                            "required": ["name"],
+                            "properties": {"name": {"type": "string"}},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "_schema.yaml").write_text(
+            yaml.dump(
+                {
+                    "type": "object",
+                    "properties": {
+                        "locations": {
+                            "type": "array",
+                            "items": {"$ref": "./_common.yaml#/$defs/base_location"},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "valid.yaml").write_text(
+            yaml.dump({"locations": [{"name": "A"}]}), encoding="utf-8"
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(root, {})
+
+        assert not any("schema validation" in r.message for r in caplog.records)
+        assert not any("cannot resolve $ref" in r.message for r in caplog.records)
+
+    def test_cross_file_ref_invalid_data_fails(self, tmp_path, caplog):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_common.yaml").write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base_location": {
+                            "type": "object",
+                            "required": ["name"],
+                            "properties": {"name": {"type": "string"}},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "_schema.yaml").write_text(
+            yaml.dump(
+                {
+                    "type": "object",
+                    "properties": {
+                        "locations": {
+                            "type": "array",
+                            "items": {"$ref": "./_common.yaml#/$defs/base_location"},
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "invalid.yaml").write_text(
+            # missing required `name` from the $ref-shared definition
+            yaml.dump({"locations": [{"lat": 1.0}]}),
+            encoding="utf-8",
+        )
+
+        with caplog.at_level("WARNING"):
+            _validate_yaml_files(root, {})
+
+        assert any("schema validation" in r.message for r in caplog.records)
+        assert any("name" in r.message for r in caplog.records)
+
+    def test_ref_to_missing_file_logs_and_does_not_crash(self, tmp_path, caplog):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_schema.yaml").write_text(
+            yaml.dump(
+                {
+                    "type": "object",
+                    "properties": {
+                        "name": {"$ref": "./_nonexistent.yaml#/$defs/base"},
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "foo.yaml").write_text(yaml.dump({"name": "A"}), encoding="utf-8")
+
+        with caplog.at_level("ERROR"):
+            _validate_yaml_files(root, {})  # must not raise
+
+        assert any("cannot resolve $ref" in r.message for r in caplog.records)
+
 
 class TestResolveSchemaProperties:
     """Schema property resolution must reach into all three loader shapes,
@@ -2812,6 +2927,58 @@ class TestResolveSchemaProperties:
         merged = _resolve_schema_properties(["foo.yaml"], resolver, {})
 
         assert merged["tags"]["title"] == "PLACE TAGS"
+
+    def test_cross_file_ref_end_to_end(self, tmp_path):
+        """Full render-time path: a real `_common.yaml` + a real `_schema.yaml`
+        that `$ref`s it, resolved via `_resolve_schema_properties`."""
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "_common.yaml").write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base_location": {
+                            "properties": {
+                                "name": {"title": "共用名稱", "type": "string"},
+                                "lat": {
+                                    "title": "緯度",
+                                    "x-osm-list-hidden": True,
+                                },
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "_schema.yaml").write_text(
+            yaml.dump(
+                {
+                    "type": "object",
+                    "properties": {
+                        "locations": {
+                            "type": "array",
+                            "items": {
+                                "allOf": [
+                                    {"$ref": "./_common.yaml#/$defs/base_location"}
+                                ],
+                                "properties": {"rating": {"title": "評分"}},
+                            },
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        (root / "foo.yaml").write_text("name: A\nlat: 1\nlon: 2\n", encoding="utf-8")
+
+        resolver = PlaceResolver(root)
+        merged = _resolve_schema_properties(["foo.yaml"], resolver, {})
+
+        assert merged["name"]["title"] == "共用名稱"
+        assert merged["lat"]["title"] == "緯度"
+        assert merged["lat"]["x-osm-list-hidden"] is True
+        assert merged["rating"]["title"] == "評分"
 
 
 class TestResolveI18nTitle:
@@ -3401,6 +3568,218 @@ class TestWalkSchemaProperties:
         _walk_schema_properties(schema, out)
         assert "visited" in out
         assert out["visited"]["title"] == "Visited"
+
+    # -- $ref support -----------------------------------------------------
+
+    def test_same_doc_ref_via_json_pointer(self):
+        """`#/$defs/...` resolves against the schema passed in (no file needed)."""
+        schema = {
+            "$defs": {
+                "base_location": {
+                    "properties": {
+                        "name": {"title": "Name", "type": "string"},
+                        "lat": {"title": "Latitude", "type": "number"},
+                    }
+                }
+            },
+            "properties": {
+                "locations": {
+                    "items": {"$ref": "#/$defs/base_location"},
+                }
+            },
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out)
+        assert out["name"]["title"] == "Name"
+        assert out["lat"]["title"] == "Latitude"
+
+    def test_cross_file_ref(self, tmp_path):
+        """A `../other.yaml#/$defs/...` ref resolves relative to schema_dir."""
+        common = tmp_path / "_common.yaml"
+        common.write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base_location": {
+                            "properties": {
+                                "name": {"title": "共用名稱", "type": "string"},
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        schema = {
+            "properties": {
+                "locations": {
+                    "items": {"$ref": "./_common.yaml#/$defs/base_location"},
+                }
+            },
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out, schema_dir=tmp_path, current_file=None)
+        assert out["name"]["title"] == "共用名稱"
+
+    def test_allof_combination(self, tmp_path):
+        """`allOf: [{$ref: ...}]` alongside local `properties` both contribute."""
+        common = tmp_path / "_common.yaml"
+        common.write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base": {
+                            "properties": {
+                                "name": {"title": "共用名稱"},
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        schema = {
+            "properties": {
+                "locations": {
+                    "items": {
+                        "allOf": [{"$ref": "./_common.yaml#/$defs/base"}],
+                        "properties": {"rating": {"title": "Rating"}},
+                    }
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out, schema_dir=tmp_path)
+        assert out["name"]["title"] == "共用名稱"
+        assert out["rating"]["title"] == "Rating"
+
+    def test_ref_and_sibling_properties_both_forms(self, tmp_path):
+        """`$ref` directly alongside `properties` at the same schema node
+        (JSON Schema 2020-12 allows this without `allOf`) must also work."""
+        common = tmp_path / "_common.yaml"
+        common.write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base": {
+                            "properties": {
+                                "name": {"title": "共用名稱"},
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        schema = {
+            "properties": {
+                "locations": {
+                    "items": {
+                        "$ref": "./_common.yaml#/$defs/base",
+                        "properties": {"rating": {"title": "Rating"}},
+                    }
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out, schema_dir=tmp_path)
+        assert out["name"]["title"] == "共用名稱"
+        assert out["rating"]["title"] == "Rating"
+
+    def test_referencing_side_overrides_shared_definition(self, tmp_path):
+        """A `$ref`-introduced field is the *outer* layer: the referencing
+        schema's own `properties` entry of the same name must win."""
+        common = tmp_path / "_common.yaml"
+        common.write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "base": {
+                            "properties": {
+                                "name": {"title": "共用預設名稱"},
+                            }
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        schema = {
+            "properties": {
+                "locations": {
+                    "items": {
+                        "$ref": "./_common.yaml#/$defs/base",
+                        "properties": {"name": {"title": "自訂名稱"}},
+                    }
+                }
+            }
+        }
+        out: dict = {}
+        _walk_schema_properties(schema, out, schema_dir=tmp_path)
+        assert out["name"]["title"] == "自訂名稱"
+
+    def test_circular_ref_does_not_infinite_loop(self, tmp_path, caplog):
+        """A refs B, B refs A — must terminate and log a warning, not hang/crash."""
+        a = tmp_path / "a.yaml"
+        b = tmp_path / "b.yaml"
+        a.write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "x": {
+                            "$ref": "./b.yaml#/$defs/y",
+                            "properties": {"from_a": {"title": "A"}},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        b.write_text(
+            yaml.dump(
+                {
+                    "$defs": {
+                        "y": {
+                            "$ref": "./a.yaml#/$defs/x",
+                            "properties": {"from_b": {"title": "B"}},
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        schema = {"$ref": "./a.yaml#/$defs/x"}
+        out: dict = {}
+        with caplog.at_level("WARNING"):
+            _walk_schema_properties(schema, out, schema_dir=tmp_path)
+        # Both branches still contribute before the cycle is cut off.
+        assert out["from_a"]["title"] == "A"
+        assert out["from_b"]["title"] == "B"
+        assert any("circular $ref" in r.message for r in caplog.records)
+
+    def test_missing_ref_file_only_warns(self, tmp_path, caplog):
+        """A `$ref` to a nonexistent file must warn, not raise."""
+        schema = {
+            "properties": {
+                "name": {"$ref": "./does_not_exist.yaml#/$defs/base"},
+            }
+        }
+        out: dict = {}
+        with caplog.at_level("WARNING"):
+            _walk_schema_properties(schema, out, schema_dir=tmp_path)
+        assert out == {"name": {"$ref": "./does_not_exist.yaml#/$defs/base"}}
+        assert any("cannot load referenced schema" in r.message for r in caplog.records)
+
+    def test_unresolvable_pointer_only_warns(self, tmp_path, caplog):
+        """`$ref` pointer that doesn't exist in the target doc must warn, not raise."""
+        common = tmp_path / "_common.yaml"
+        common.write_text(yaml.dump({"$defs": {"base": {"properties": {}}}}))
+        schema = {"$ref": "./_common.yaml#/$defs/nonexistent"}
+        out: dict = {}
+        with caplog.at_level("WARNING"):
+            _walk_schema_properties(schema, out, schema_dir=tmp_path)
+        assert out == {}
+        assert any("cannot resolve $ref" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
