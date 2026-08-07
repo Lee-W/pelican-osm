@@ -1,3 +1,9 @@
+## 0.15.0 (2026-08-07)
+
+### Feat
+
+- support $ref in place schemas for shared definitions
+
 ## 0.14.0 (2026-07-24)
 
 ### Feat
