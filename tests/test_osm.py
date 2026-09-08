@@ -647,6 +647,95 @@ class TestRenderPlaceListHtmlItems:
 
 
 # ---------------------------------------------------------------------------
+# _render_place_list_html: 🗺️ link → OSM entity page via osm_type/osm_id
+# ---------------------------------------------------------------------------
+
+
+class TestRenderPlaceListHtmlOsmEntityLink:
+    def _name_cell(self, html):
+        return re.search(r"<td data-sort-value[^>]*>.*?</td>", html, re.DOTALL).group()
+
+    def test_entity_link_used_when_osm_type_and_id_present(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 25.03,
+                "lon": 121.56,
+                "osm_type": "node",
+                "osm_id": 123,
+            }
+        ]
+        cell = self._name_cell(_render_place_list_html(places, [], {}))
+        assert 'href="https://www.openstreetmap.org/node/123"' in cell
+        assert "mlat=" not in cell
+
+    def test_way_and_relation_are_valid_types(self):
+        for osm_type in ("way", "relation"):
+            places = [
+                {
+                    "name": "A",
+                    "lat": 1.0,
+                    "lon": 2.0,
+                    "osm_type": osm_type,
+                    "osm_id": 9,
+                }
+            ]
+            cell = self._name_cell(_render_place_list_html(places, [], {}))
+            assert f'href="https://www.openstreetmap.org/{osm_type}/9"' in cell
+
+    def test_falls_back_to_coords_when_osm_id_missing(self):
+        places = [{"name": "A", "lat": 25.03, "lon": 121.56, "osm_type": "node"}]
+        cell = self._name_cell(_render_place_list_html(places, [], {}))
+        assert "mlat=25.03" in cell
+        assert "openstreetmap.org/node" not in cell
+
+    def test_falls_back_to_coords_when_osm_type_missing(self):
+        places = [{"name": "A", "lat": 25.03, "lon": 121.56, "osm_id": 123}]
+        cell = self._name_cell(_render_place_list_html(places, [], {}))
+        assert "mlat=25.03" in cell
+
+    def test_falls_back_to_coords_when_osm_type_invalid(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 25.03,
+                "lon": 121.56,
+                "osm_type": "foo",
+                "osm_id": 123,
+            }
+        ]
+        cell = self._name_cell(_render_place_list_html(places, [], {}))
+        assert "mlat=25.03" in cell
+        assert "openstreetmap.org/foo" not in cell
+
+    def test_osm_type_and_id_not_rendered_as_columns(self):
+        places = [
+            {
+                "name": "A",
+                "lat": 1.0,
+                "lon": 2.0,
+                "osm_type": "node",
+                "osm_id": 123,
+                "city": "Taipei",
+            }
+        ]
+        html = _render_place_list_html(
+            places,
+            [],
+            {},
+            field_schema={
+                "osm_type": {"title": "OSM 類型"},
+                "osm_id": {"title": "OSM ID"},
+            },
+        )
+        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        assert "OSM 類型" not in thead
+        assert "osm_type" not in thead
+        assert "osm_id" not in thead
+        assert ">City<" in thead or "<th>City</th>" in thead
+
+
+# ---------------------------------------------------------------------------
 # _place_to_feature with items
 # ---------------------------------------------------------------------------
 
@@ -665,6 +754,21 @@ class TestPlaceToFeatureItems:
         assert "items" not in feat["properties"]
         assert feat["properties"]["name"] == "T"
         assert feat["properties"]["country"] == "TW"
+
+    def test_osm_type_and_id_kept_in_geojson_properties(self):
+        # The front-end JS needs osm_type/osm_id in the feature properties to
+        # build the OSM entity link for the popup, so they must NOT be stripped.
+        feat = _place_to_feature(
+            {
+                "name": "T",
+                "lat": 1.0,
+                "lon": 2.0,
+                "osm_type": "way",
+                "osm_id": 456,
+            }
+        )
+        assert feat["properties"]["osm_type"] == "way"
+        assert feat["properties"]["osm_id"] == 456
 
 
 # ---------------------------------------------------------------------------
@@ -2220,6 +2324,19 @@ class TestYamlToGeojson:
         fc = _yaml_to_geojson(yml)
         assert len(fc["features"]) == 1
         assert fc["features"][0]["properties"]["name"] == "Valid"
+
+    def test_osm_type_and_id_survive_yaml_to_geojson(self, tmp_path):
+        yml = tmp_path / "test.yml"
+        yml.write_text(
+            "locations:\n"
+            "  - name: A\n    lat: 1.0\n    lon: 2.0\n"
+            "    osm_type: relation\n    osm_id: 789\n",
+            encoding="utf-8",
+        )
+        fc = _yaml_to_geojson(yml)
+        props = fc["features"][0]["properties"]
+        assert props["osm_type"] == "relation"
+        assert props["osm_id"] == 789
 
     def test_list_of_dates_serialized_to_strings(self, tmp_path):
         yml = tmp_path / "test.yml"

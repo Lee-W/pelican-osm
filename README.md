@@ -332,9 +332,13 @@ Marker icons only affect `{% place %}` map pins; `{% place_list %}` table column
 | `images` | — | List — rendered as a photo gallery in the popup |
 | `urls` | — | List — rendered as links in the popup and list table; see below |
 | `icon` | — | Emoji shown as the map marker for this place. Overrides any `x-osm-icon` schema mapping. See [Marker icons](#marker-icons). |
+| `osm_type` | — | `node`, `way`, or `relation`. Together with `osm_id`, points the 🗺️ link at the OSM entity page. Not shown as a popup field or list column. |
+| `osm_id` | — | The OpenStreetMap element id. Only used when `osm_type` is also set. Not shown as a popup field or list column. |
 | *(any)* | — | All other fields shown as `Key: Value` lines |
 
-OSM and Google Maps links are **always auto-generated** from `lat`/`lon`.
+OSM and Google Maps links are **always auto-generated** — from `lat`/`lon` by default, or from `osm_type`/`osm_id` for the 🗺️ link when both are set (see below).
+
+When a place has both a valid `osm_type` (`node` / `way` / `relation`) and an `osm_id`, the 🗺️ link in the popup and the `place_list` table points at the OpenStreetMap entity page (`https://www.openstreetmap.org/<osm_type>/<osm_id>`) instead of a coordinate link. If either field is missing or `osm_type` is not one of the three valid values, the link falls back to the coordinate form. The 📍 Google Maps link is always coordinate-based.
 
 ### `urls` field
 

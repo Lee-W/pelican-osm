@@ -92,8 +92,15 @@ _LIST_RESERVED = frozenset(
         "_item_slug_parts",
         "items",
         "icon",  # map/popup marker icon only, not a table column
+        "osm_type",  # map/popup link target only, not a table column
+        "osm_id",  # map/popup link target only, not a table column
     ]
 )
+
+# Valid ``osm_type`` values. When a place carries one of these plus an
+# ``osm_id``, the 🗺️ link points at the OSM entity page instead of a
+# coordinate link.
+_OSM_ENTITY_TYPES = frozenset(["node", "way", "relation"])
 
 
 def _slugify(value: str) -> str:
@@ -1420,17 +1427,29 @@ def _render_place_list_html(
             if isinstance(u, dict) and u.get("href")
         )
 
-    def render_map_links(lat: Any, lon: Any) -> str:
+    def render_map_links(place: dict[str, Any]) -> str:
         """Render the 🗺️·📍 link span. Empty string when lat/lon missing.
 
         Used both inside the data row's name cell and inside the summary
         header for ``name`` when name is hoisted via ``group_summary_at``.
         CSS class ``osm-list-map-links`` is ``display: block`` so the icons
         appear on a new line below their sibling text.
+
+        The 🗺️ link points at the OpenStreetMap entity page
+        (``/<osm_type>/<osm_id>``) when the place carries a valid
+        ``osm_type`` (``node`` / ``way`` / ``relation``) together with an
+        ``osm_id``; otherwise it falls back to a coordinate link.
         """
+        lat = place.get("lat")
+        lon = place.get("lon")
         if lat is None or lon is None:
             return ""
-        osm_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=17"
+        osm_type = place.get("osm_type")
+        osm_id = place.get("osm_id")
+        if osm_type in _OSM_ENTITY_TYPES and osm_id is not None:
+            osm_url = f"https://www.openstreetmap.org/{osm_type}/{osm_id}"
+        else:
+            osm_url = f"https://www.openstreetmap.org/?mlat={lat}&mlon={lon}&zoom=17"
         gmaps_url = f"https://maps.google.com/?q={lat},{lon}"
         return (
             f'<span class="osm-list-map-links">'
@@ -1447,7 +1466,7 @@ def _render_place_list_html(
         return (
             f'<td data-sort-value="{html.escape(name, quote=True)}">'
             f"{html.escape(name)}"
-            f"{render_map_links(place.get('lat'), place.get('lon'))}</td>"
+            f"{render_map_links(place)}</td>"
         )
 
     used_row_ids: set[str] = set()
@@ -1627,7 +1646,7 @@ def _render_place_list_html(
                 # place's identity AND its location (mirrors data-row name cell).
                 map_links_html = ""
                 if group_summary_at[depth] == "name":
-                    map_links_html = render_map_links(row.get("lat"), row.get("lon"))
+                    map_links_html = render_map_links(row)
                 anchor_id = _anchor_id(prefix)
                 rendered_rows.append(
                     f'<tr class="osm-group-header'
