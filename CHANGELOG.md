@@ -1,3 +1,9 @@
+## 0.16.0 (2026-09-08)
+
+### Feat
+
+- link place map icon to the OSM entity page when osm_type/osm_id is set
+
 ## 0.15.0 (2026-08-07)
 
 ### Feat
