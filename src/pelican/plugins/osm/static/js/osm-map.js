@@ -144,7 +144,11 @@
     "images",
     "urls",
     "_osm_icon",
+    "osm_type",
+    "osm_id",
   ]);
+
+  const OSM_ENTITY_TYPES = new Set(["node", "way", "relation"]);
 
   function fieldLabel(key, perMapLabels) {
     // Precedence: schema-supplied per-map label (locale-aware, built at
@@ -176,7 +180,14 @@
       .join("");
 
     // lat/lon come from GeoJSON coordinates (numbers); safe to interpolate.
-    const osmUrl = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}&zoom=16`;
+    // Point 🗺️ at the OSM entity page when the place carries a valid
+    // osm_type + osm_id; otherwise fall back to a coordinate link.
+    const osmUrl =
+      OSM_ENTITY_TYPES.has(props.osm_type) &&
+      props.osm_id !== undefined &&
+      props.osm_id !== null
+        ? `https://www.openstreetmap.org/${props.osm_type}/${encodeURIComponent(props.osm_id)}`
+        : `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}&zoom=16`;
     const googleUrl = `https://www.google.com/maps?q=${lat},${lon}`;
     const links =
       `<div class="osm-popup-links">` +
