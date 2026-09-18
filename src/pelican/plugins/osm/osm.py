@@ -9,13 +9,22 @@ import logging
 import re
 import shlex
 import shutil
-from collections import defaultdict
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
 
 import yaml
 from pelican.contents import Article, Page
+from pelican.plugins.tabular.assets import bundle_legacy_assets, register_assets
+from pelican.plugins.tabular.core import (  # noqa: F401 - compatibility for consumers
+    aggregate_field as _aggregate_field,
+)
+from pelican.plugins.tabular.core import (
+    collapse_rows,
+)
+from pelican.plugins.tabular.core import extract_year as _extract_year  # noqa: F401
+from pelican.plugins.tabular.core import extract_years as _extract_years  # noqa: F401
+from pelican.plugins.tabular.rendering import render_table_body
 
 from pelican import signals  # type: ignore[attr-defined]
 
@@ -278,128 +287,11 @@ def _parse_aggregate_kwarg(raw: str) -> dict[str, str]:
     return spec
 
 
-def _extract_year(value: Any) -> int | None:
-    """Best-effort extraction of a year integer from a date-like value."""
-    if isinstance(value, datetime.datetime):
-        return value.year
-    if isinstance(value, datetime.date):
-        return value.year
-    if isinstance(value, int):
-        return value if 1000 <= value <= 9999 else None
-    if isinstance(value, str) and len(value) >= 4 and value[:4].isdigit():
-        return int(value[:4])
-    if isinstance(value, list):
-        for item in value:
-            year = _extract_year(item)
-            if year is not None:
-                return year
-    return None
-
-
-def _extract_years(value: Any) -> list[int]:
-    """Extract all years from a date or list of dates."""
-    if isinstance(value, list):
-        years: list[int] = []
-        for item in value:
-            year = _extract_year(item)
-            if year is not None:
-                years.append(year)
-        return years
-    year = _extract_year(value)
-    return [year] if year is not None else []
-
-
-def _aggregate_field(op: str, field: str, places: list[dict[str, Any]]) -> Any:
-    """Aggregate ``field`` across ``places`` according to ``op``.
-
-    Currently supports:
-      * ``year`` — collect unique years from a date-like field, sorted
-        ascending, comma-joined as a string. Returns ``""`` if no place has
-        a usable year. Supports list-valued date fields.
-    """
-    if op == "year":
-        seen: set[int] = set()
-        ordered: list[int] = []
-        for p in places:
-            for year in _extract_years(p.get(field)):
-                if year not in seen:
-                    seen.add(year)
-                    ordered.append(year)
-        ordered.sort()
-        return ", ".join(str(y) for y in ordered)
-    log.warning("pelican-osm: unknown aggregate op %r for field %r", op, field)
-    return ""
-
-
 def _collapse_places(
-    places: list[dict[str, Any]],
-    group_by: list[str],
-    aggregate: dict[str, str],
+    places: list[dict[str, Any]], group_by: list[str], aggregate: dict[str, str]
 ) -> list[dict[str, Any]]:
-    """Group places by ``group_by`` for tree-style rendering.
-
-    Two modes, controlled by whether ``aggregate`` is non-empty:
-
-    * **No aggregate** (the common case): each input place becomes one
-      output row. Rows are merely re-ordered so that everything sharing
-      a group-key tuple is contiguous, preserving first-appearance order
-      across keys and original order within a key. Each row carries
-      ``_places: [self]`` so summary count math still adds up.
-
-    * **With aggregate** (SQL-style collapse): all places sharing a group
-      key merge into a single row. Aggregate fields are computed via
-      ``_aggregate_field``; for other fields the first non-empty value
-      wins; ``tags`` are unioned (parent first). The merged row's
-      ``_places`` lists every collapsed place.
-
-    The first mode is what most ``group_by`` users want — they're asking
-    for a visual tree, not for set-style aggregation. Auto-merging without
-    an explicit ``aggregate`` directive silently destroys per-row data
-    (e.g. nested ``items`` rows would collapse into one).
-    """
-    order: list[tuple] = []
-    if not aggregate:
-        buckets: dict[tuple, list[dict[str, Any]]] = {}
-        for place in places:
-            key = tuple(place.get(g, "") for g in group_by)
-            if key not in buckets:
-                buckets[key] = []
-                order.append(key)
-            buckets[key].append(place)
-        return [{**p, "_places": [p]} for key in order for p in buckets[key]]
-
-    rows: dict[tuple, dict[str, Any]] = {}
-    for place in places:
-        key = tuple(place.get(g, "") for g in group_by)
-        if key not in rows:
-            rows[key] = {**place, "_places": [place]}
-            order.append(key)
-            continue
-
-        existing = rows[key]
-        existing["_places"].append(place)
-        for k, v in place.items():
-            if k == "tags" or k in aggregate:
-                continue
-            if not existing.get(k) and v:
-                existing[k] = v
-
-        merged_tags: list[Any] = list(existing.get("tags") or [])
-        seen_tags = set(merged_tags)
-        for t in place.get("tags") or []:
-            if t not in seen_tags:
-                merged_tags.append(t)
-                seen_tags.add(t)
-        if merged_tags:
-            existing["tags"] = merged_tags
-
-    result: list[dict[str, Any]] = []
-    for key in order:
-        row = rows[key]
-        for field, op in aggregate.items():
-            row[field] = _aggregate_field(op, field, row["_places"])
-        result.append(row)
-    return result
+    """Preserve OSM's tag-union policy on the shared grouping engine."""
+    return collapse_rows(places, group_by, aggregate, union_fields=("tags",))
 
 
 def _load_yaml_file(path: Path) -> list[dict[str, Any]]:
@@ -1540,6 +1432,9 @@ def _render_place_list_html(
             parts.append(f' data-osm-place-slug="{slug}"')
         if parent_slug:
             parts.append(f' data-osm-parent-slug="{parent_slug}"')
+        weight = len(row.get("_places") or [row])
+        if weight > 1:
+            parts.append(f' data-row-weight="{weight}"')
         return "".join(parts)
 
     has_tags = any(row.get("tags") for row in rows) and not is_hidden("tags")
@@ -1598,74 +1493,16 @@ def _render_place_list_html(
                 cells.append("<td></td>")
         return f"<tr{_row_attrs(row)}>" + "".join(cells) + "</tr>"
 
-    rendered_rows: list[str] = []
-    if group_summary_at:
-        # Pre-compute place counts at every prefix depth so each header can
-        # display its own subtotal (e.g. country total → city total → district
-        # total) regardless of how many descendant rows it spans.
-        prefix_counts: dict[tuple, int] = defaultdict(int)
-        for row in rows:
-            n = len(row.get("_places") or [row])
-            key = tuple(row.get(f, "") for f in group_summary_at)
-            for d in range(len(key)):
-                prefix_counts[key[: d + 1]] += n
-
-        used_ids: set[str] = set()
-
-        def _anchor_id(prefix: tuple) -> str:
-            slug_parts = [_slugify(v) for v in prefix]
-            base = "osm-group--" + "--".join(slug_parts)
-            anchor = base
-            n = 2
-            while anchor in used_ids:
-                anchor = f"{base}-{n}"
-                n += 1
-            used_ids.add(anchor)
-            return anchor
-
-        prev_key: tuple = ()
-        for row in rows:
-            cur_key = tuple(row.get(f, "") for f in group_summary_at)
-            for depth, val in enumerate(cur_key):
-                prefix = cur_key[: depth + 1]
-                prev_prefix = (
-                    prev_key[: depth + 1] if len(prev_key) >= depth + 1 else None
-                )
-                if prefix == prev_prefix:
-                    continue
-                title = str(val)
-                count_html = ""
-                if group_count_template:
-                    # The template itself is developer-controlled (set via
-                    # OSM_GROUP_COUNT_TEMPLATE), so leave its markup intact;
-                    # only ``n`` is interpolated and it's always an int.
-                    count_text = group_count_template.format(n=prefix_counts[prefix])
-                    count_html = f'<span class="osm-group-count">{count_text}</span>'
-                # When ``name`` is the summary field at this depth, surface the
-                # parent's map links inside the header so the block carries the
-                # place's identity AND its location (mirrors data-row name cell).
-                map_links_html = ""
-                if group_summary_at[depth] == "name":
-                    map_links_html = render_map_links(row)
-                anchor_id = _anchor_id(prefix)
-                rendered_rows.append(
-                    f'<tr class="osm-group-header'
-                    f' osm-group-header--depth-{depth}"'
-                    f' data-depth="{depth}" id="{anchor_id}">'
-                    f'<td colspan="{col_count}">'
-                    f'<span class="osm-group-header-toggle"'
-                    f' aria-hidden="true">▾</span>'
-                    f'<strong class="osm-group-header-title">'
-                    f"{html.escape(title)}</strong>"
-                    f"{count_html}"
-                    f"{map_links_html}"
-                    f"</td></tr>"
-                )
-            prev_key = cur_key
-            rendered_rows.append(render_data_row(row))
-    else:
-        for row in rows:
-            rendered_rows.append(render_data_row(row))
+    body = render_table_body(
+        rows,
+        column_count=col_count,
+        render_row=render_data_row,
+        group_summary_at=group_summary_at,
+        group_count_template=group_count_template,
+        group_suffix=lambda row, field: (
+            render_map_links(row) if field == "name" else ""
+        ),
+    )
 
     # Single JSON sidecar instead of per-row data-images attrs. The text
     # is HTML-safe because <script type="application/json"> isn't parsed
@@ -1684,7 +1521,7 @@ def _render_place_list_html(
         '<div class="osm-place-list-wrapper">\n'
         '<table class="osm-place-list">\n'
         "<thead><tr>" + "".join(headers) + "</tr></thead>\n"
-        "<tbody>\n" + "\n".join(rendered_rows) + "\n</tbody>\n"
+        "<tbody>\n" + body + "\n</tbody>\n"
         "</table>\n"
         '<div class="osm-place-list-count"></div>\n'
         f"{images_sidecar}"
@@ -2263,10 +2100,12 @@ def _copy_static(pelican_obj: Any) -> None:
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(static_src, dest)
+        bundle_legacy_assets(dest / "js/osm-map.js", dest / "css/osm-map.css")
         log.debug("pelican-osm: copied static assets to %s", dest)
 
 
 def register() -> None:
+    register_assets()
     signals.initialized.connect(_init_resolver)
     signals.content_object_init.connect(_process_article)
     signals.finalized.connect(_copy_static)

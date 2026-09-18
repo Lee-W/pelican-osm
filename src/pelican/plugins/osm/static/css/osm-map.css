@@ -72,31 +72,8 @@
   --osm-fs-btn-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
   --osm-fs-btn-hover-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 
-  /* Place list — group_summary_at header rows.
-     -bg is the single-depth/fallback color; -bg-{0..3} grade from most
-     prominent (depth 0) to least, so nested groupings read at a glance. */
-  --osm-group-header-bg: #e8f0fe;
-  --osm-group-header-bg-0: #c9d8f3;
-  --osm-group-header-bg-1: #dde7fa;
-  --osm-group-header-bg-2: #ebf0fb;
-  --osm-group-header-bg-3: #f3f6fc;
-  --osm-group-header-color: #1a3a6c;
-  --osm-group-header-border-color: #cdd9ee;
-  --osm-group-count-color: #6a7a92;
-
   /* Map canvas placeholder */
   --osm-map-bg: #e8e8e8;
-
-  /* Place list — table colors swapped per theme */
-  --osm-table-bg: #fff;
-  --osm-table-th-color: inherit;
-  --osm-table-th-border-color: #ccc;
-  --osm-table-cell-border-color: #e0e0e0;
-  --osm-table-row-hover-bg: #fafafa;
-  --osm-table-row-target-bg: #fff7c2;
-  --osm-table-sticky-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.12);
-  --osm-sort-hover-bg: #ebebeb;
-  --osm-sort-icon-opacity: 0.3;
 
   /* Leaflet popup */
   --osm-popup-bg: #fff;
@@ -618,7 +595,6 @@
 
 .osm-map-layer-chip--active:hover { opacity: 0.85; }
 
-
 /* --------------------------------------------------------------------------
    Caption bar
    -------------------------------------------------------------------------- */
@@ -770,112 +746,6 @@
 /* --------------------------------------------------------------------------
    Place list table  ({% place_list %} shortcode)
    -------------------------------------------------------------------------- */
-.osm-place-list-wrapper {
-  overflow-x: auto;
-  margin: 1.5em 0;
-}
-
-.osm-place-list {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.95em;
-}
-
-.osm-place-list th,
-.osm-place-list td {
-  padding: 0.5em 0.75em;
-  text-align: left;
-  vertical-align: top;
-  border-bottom: 1px solid var(--osm-table-cell-border-color);
-}
-
-.osm-place-list th {
-  font-weight: 600;
-  background: var(--osm-caption-bg, #f5f5f5);
-  color: var(--osm-table-th-color);
-  border-bottom: 2px solid var(--osm-table-th-border-color);
-  white-space: nowrap;
-}
-
-.osm-place-list tbody tr:hover {
-  background: var(--osm-table-row-hover-bg);
-}
-
-/* Highlight when arriving via #osm-place-<slug> anchor; scroll-margin keeps
-   the row clear of sticky page headers. */
-.osm-place-list tbody tr.osm-place-row:target {
-  background: var(--osm-table-row-target-bg);
-  scroll-margin-top: 1em;
-}
-
-.osm-place-list td a {
-  color: var(--osm-links-anchor-color, #c0392b);
-  text-decoration: none;
-}
-
-.osm-place-list td a:hover {
-  text-decoration: underline;
-}
-
-/* Row count caption below table */
-.osm-place-list-count {
-  text-align: left;
-  font-size: 0.82em;
-  color: #999;
-  padding: 0.3em 0.75em 0;
-}
-
-/* Tag badges in tables are clickable to filter */
-.osm-place-list .osm-badge--tag {
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.osm-place-list .osm-badge--tag:hover {
-  opacity: 0.7;
-}
-
-/* Tag filter chip (shown when a tag filter is active) */
-.osm-tag-filter-chip {
-  display: inline-block;
-  font-size: 0.82em;
-  padding: 0.1em 0.5em;
-  margin-right: 0.5em;
-  border-radius: 999px;
-  background: var(--osm-badge-tag-bg, #e8e8e8);
-  color: var(--osm-badge-tag-color, #444);
-  cursor: pointer;
-  font-weight: 600;
-  transition: opacity 0.15s;
-}
-
-.osm-tag-filter-chip:hover {
-  opacity: 0.7;
-}
-
-/* Sticky first column — keeps Name visible while scrolling horizontally */
-.osm-place-list th:first-child,
-.osm-place-list td:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  /* shadow on the right edge signals there is more content */
-  box-shadow: var(--osm-table-sticky-shadow);
-}
-
-.osm-place-list th:first-child {
-  background: var(--osm-caption-bg, #f5f5f5);
-  z-index: 2;
-}
-
-.osm-place-list td:first-child {
-  background: var(--osm-table-bg);
-}
-
-.osm-place-list tbody tr:hover td:first-child {
-  background: var(--osm-table-row-hover-bg);
-}
-
 /* Map icon links inside the Name cell — shown on a new line */
 .osm-list-map-links {
   display: block;
@@ -923,130 +793,6 @@
 }
 
 .osm-list-image-icon:hover {
-  opacity: 1;
-}
-
-/* --------------------------------------------------------------------------
-   Place list — group_summary_at header rows
-   Inserted between data rows when group_summary_at is set. The <td> spans
-   the whole row so the title reads as a section heading rather than a row.
-   -------------------------------------------------------------------------- */
-.osm-place-list .osm-group-header td {
-  background: var(--osm-group-header-bg);
-  color: var(--osm-group-header-color);
-  border-bottom: 2px solid var(--osm-group-header-border-color);
-  padding: 0.6em 0.8em;
-}
-
-/* Suppress the body-row hover so the heading colour stays stable */
-.osm-place-list tbody tr.osm-group-header:hover td {
-  background: var(--osm-group-header-bg);
-}
-
-/* The header td would otherwise inherit the sticky-first-column rules; the
-   row already spans the full table width so the right-edge shadow is wrong. */
-.osm-place-list .osm-group-header td:first-child {
-  position: static;
-  box-shadow: none;
-  background: var(--osm-group-header-bg);
-}
-.osm-place-list tbody tr.osm-group-header:hover td:first-child {
-  background: var(--osm-group-header-bg);
-}
-
-.osm-group-header-title {
-  font-weight: 700;
-  font-size: 1.05em;
-}
-
-/* Force the count onto its own line below the title */
-.osm-group-count {
-  display: block;
-  margin-top: 0.15em;
-  color: var(--osm-group-count-color);
-  font-size: 0.85em;
-  font-weight: normal;
-}
-
-/* Multi-level group_summary_at: scale typography down at each depth and
-   indent so the hierarchy is visible at a glance. */
-.osm-place-list .osm-group-header--depth-0 .osm-group-header-title {
-  font-size: 1.2em;
-}
-.osm-place-list .osm-group-header--depth-1 .osm-group-header-title {
-  font-size: 1.05em;
-}
-.osm-place-list .osm-group-header--depth-2 .osm-group-header-title {
-  font-size: 0.95em;
-}
-.osm-place-list .osm-group-header--depth-3 .osm-group-header-title {
-  font-size: 0.9em;
-}
-.osm-place-list .osm-group-header--depth-1 td {
-  padding-left: 1.6em;
-}
-.osm-place-list .osm-group-header--depth-2 td {
-  padding-left: 2.8em;
-}
-.osm-place-list .osm-group-header--depth-3 td {
-  padding-left: 4em;
-}
-
-/* Per-depth backgrounds for discoverability. We redeclare the base
-   --osm-group-header-bg variable on each td so every existing rule that
-   references it (hover, sticky-first-cell) picks up the depth-specific
-   color via the cascade — no need to fork those rules. */
-.osm-place-list .osm-group-header--depth-0 td {
-  --osm-group-header-bg: var(--osm-group-header-bg-0);
-}
-.osm-place-list .osm-group-header--depth-1 td {
-  --osm-group-header-bg: var(--osm-group-header-bg-1);
-}
-.osm-place-list .osm-group-header--depth-2 td {
-  --osm-group-header-bg: var(--osm-group-header-bg-2);
-}
-.osm-place-list .osm-group-header--depth-3 td {
-  --osm-group-header-bg: var(--osm-group-header-bg-3);
-}
-
-/* Click-to-collapse affordance */
-.osm-place-list .osm-group-header {
-  cursor: pointer;
-}
-.osm-group-header-toggle {
-  display: inline-block;
-  margin-right: 0.4em;
-  color: var(--osm-group-count-color);
-  transition: transform 0.15s ease;
-}
-.osm-place-list .osm-group-header--collapsed .osm-group-header-toggle {
-  transform: rotate(-90deg);
-}
-
-/* Hide rows whose ancestor header is collapsed (managed by JS). */
-.osm-place-list tr.osm-row-hidden {
-  display: none;
-}
-
-/* Sortable column headers */
-.osm-place-list th[data-sortable] {
-  cursor: pointer;
-  user-select: none;
-}
-
-.osm-place-list th[data-sortable]:hover {
-  background: var(--osm-sort-hover-bg);
-}
-
-/* ⇅ neutral hint — faint so it doesn't distract */
-.osm-sort-icon {
-  margin-left: 0.3em;
-  font-size: 0.75em;
-  opacity: var(--osm-sort-icon-opacity);
-}
-
-/* ▲ / ▼ active indicator — fully visible */
-.osm-sort-icon[data-active] {
   opacity: 1;
 }
 
@@ -1287,16 +1033,6 @@
 
   --osm-map-bg: #2a2a2a;
 
-  --osm-table-bg: #1e1e1e;
-  --osm-table-th-color: #ddd;
-  --osm-table-th-border-color: #555;
-  --osm-table-cell-border-color: #333;
-  --osm-table-row-hover-bg: #2a2a2a;
-  --osm-table-row-target-bg: #4a4419;
-  --osm-table-sticky-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.5);
-  --osm-sort-hover-bg: #333;
-  --osm-sort-icon-opacity: 0.4;
-
   --osm-popup-bg: #2a2a2a;
   --osm-popup-color: #ddd;
   --osm-popup-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
@@ -1306,14 +1042,6 @@
   --osm-fs-btn-color: #ddd;
   --osm-fs-btn-hover-bg: #3a3a3a;
 
-  --osm-group-header-bg: #2a3a52;
-  --osm-group-header-bg-0: #3d5379;
-  --osm-group-header-bg-1: #324466;
-  --osm-group-header-bg-2: #283750;
-  --osm-group-header-bg-3: #232c41;
-  --osm-group-header-color: #e8f0fe;
-  --osm-group-header-border-color: #3d5275;
-  --osm-group-count-color: #9aa8c0;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1333,15 +1061,6 @@
 
     --osm-map-bg: #2a2a2a;
 
-    --osm-table-bg: #1e1e1e;
-    --osm-table-th-color: #ddd;
-    --osm-table-th-border-color: #555;
-    --osm-table-cell-border-color: #333;
-    --osm-table-row-hover-bg: #2a2a2a;
-    --osm-table-sticky-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.5);
-    --osm-sort-hover-bg: #333;
-    --osm-sort-icon-opacity: 0.4;
-
     --osm-popup-bg: #2a2a2a;
     --osm-popup-color: #ddd;
     --osm-popup-shadow: 0 2px 12px rgba(0, 0, 0, 0.6);
@@ -1351,14 +1070,6 @@
     --osm-fs-btn-color: #ddd;
     --osm-fs-btn-hover-bg: #3a3a3a;
 
-    --osm-group-header-bg: #2a3a52;
-    --osm-group-header-bg-0: #3d5379;
-    --osm-group-header-bg-1: #324466;
-    --osm-group-header-bg-2: #283750;
-    --osm-group-header-bg-3: #232c41;
-    --osm-group-header-color: #e8f0fe;
-    --osm-group-header-border-color: #3d5275;
-    --osm-group-count-color: #9aa8c0;
   }
 }
 
