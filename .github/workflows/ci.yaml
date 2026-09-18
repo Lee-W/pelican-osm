@@ -5,11 +5,15 @@ on: [pull_request, workflow_dispatch]
 jobs:
   check:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pelican-osm
     steps:
       - name: Check out
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          path: pelican-osm
 
       - name: Install the latest version of uv
         uses: astral-sh/setup-uv@v7
@@ -17,10 +21,41 @@ jobs:
           enable-cache: true
           version: "latest"
 
-      - name: Install dependencies
-        run: |
-          uv sync
+      - name: Install published dependencies
+        run: uv sync --locked --no-sources
 
-      - name: Run pre-commit hooks
+      - name: Run pre-commit hooks and tests
+        run: uv run --locked poe ci
+
+      - name: Select the locked tabular release
+        id: tabular
         run: |
-          uv run poe ci
+          uv run --locked python -c 'from importlib.metadata import version; print("version=" + version("pelican-tabular"))' >> "$GITHUB_OUTPUT"
+
+      - name: Check out browser fixtures for that release
+        uses: actions/checkout@v6
+        with:
+          repository: Lee-W/pelican-tabular
+          ref: ${{ steps.tabular.outputs.version }}
+          path: pelican-tabular
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: pelican-tabular/package-lock.json
+
+      - name: Test real OSM assets with the published table core
+        working-directory: pelican-tabular
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          uv run --project ../pelican-osm --locked pelican examples/database/content -s examples/database/pelicanconf.py -o examples/database/output
+          uv run --project ../pelican-osm --locked python scripts/build_browser_fixtures.py --osm-source ../pelican-osm
+          npm run test:browser
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: osm-tabular-browser-results
+          path: pelican-tabular/test-results/

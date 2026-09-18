@@ -666,3 +666,27 @@ If you already declare per-field titles in your `_schema.yaml` via `title` and `
 ## License
 
 MIT © Wei Lee
+
+
+## Shared table core
+
+OSM depends on `pelican-tabular>=0.7.0` for table grouping, aggregation,
+sorting, tag filtering, group collapse and table CSS. OSM retains place data,
+schema hints, map links and photo lightboxes. Both plugins may be enabled;
+shared assets are registered once, including when only OSM is enabled.
+
+Keep loading the existing `osm-map.css` and `osm-map.js` URLs. At build time,
+OSM includes tabular's shared table engine and legacy table CSS in these files.
+Existing themes and plain tables need no new assets or configuration. There is
+only one maintained table engine; it is guarded against duplicate initialization
+when a page also selects an optional tabular database view. Database controls
+are excluded from the OSM bundle.
+
+Install development dependencies with `uv sync --locked`. The lockfile uses
+the published tabular package from PyPI; a sibling checkout is not required.
+
+CI checks out the browser fixtures at the locked tabular version's tag and
+runs them with OSM's environment, so rendering and assets use the installed
+release rather than the fixture checkout's Python source. The release workflow
+uses `uv sync --locked --no-sources --no-dev` to verify the registry dependency
+and lockfile before publishing.
