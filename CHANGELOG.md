@@ -1,3 +1,9 @@
+## 0.16.1 (2026-09-19)
+
+### Refactor
+
+- share table behavior with pelican-tabular
+
 ## 0.16.0 (2026-09-08)
 
 ### Feat
