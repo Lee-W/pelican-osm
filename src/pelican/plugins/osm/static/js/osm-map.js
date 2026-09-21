@@ -9,9 +9,9 @@
  *
  * i18n: Override window.OSM_I18N before this script loads, e.g.:
  *   window.OSM_I18N = {
- *     manyPlaces:    (names, total) => `${names} 等 ${total} 個地點`,
- *     osmLink:       "OSM",
- *     googleLink:    "Google",
+ *     placeCount:    (n) => `${n} 個地點`,
+ *     viewInTable:   "在表格中檢視",
+ *     resetView:     "重設地圖範圍",
  *     fieldLabels:   { date: "日期", location: "地點" },
  *   };
  */

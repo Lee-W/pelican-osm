@@ -13,16 +13,16 @@
 - Per-place popup with auto-generated OSM and Google Maps links
 - `tags` list rendered as clickable badges — click to filter the table by tag
 - `urls` list rendered as labelled links in the popup and list table
-- All extra YAML fields displayed in the popup automatically
+- Non-reserved YAML fields displayed in the popup automatically
 - Horizontal scroll photo gallery in popups with lightbox viewer (swipe on mobile)
 - Optional marker clustering via [Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster) (auto-detected)
 - Lazy map initialization — maps only load when scrolled into view
 - Reset view button (↺) to return to the original map bounds
 - Deep linking — link directly to a place via URL hash (e.g. `page.html#place_id`)
 - Error/empty state messages when data fails to load
-- Auto-detects `<html lang>` for built-in translations (zh, ja), with full override via `window.OSM_I18N`
+- Selected browser UI messages use `<html lang>` for built-in translations (zh, ja), with overrides via `window.OSM_I18N`; see [i18n](#i18n) for coverage and limitations
 - Optional [JSON Schema](https://json-schema.org/) validation for place YAML — drop a `_schema.yaml` next to your files and the plugin enforces it at build time
-- Fully class-based CSS — every visual detail overridable via custom properties
+- Class-based CSS with custom properties for map, popup and table styling
 - Dark mode support
 
 ## How it works
@@ -33,7 +33,7 @@ content/places/japan/mygo.yaml   →   output/static/places/japan/mygo.geojson
                               browser fetches at runtime via Leaflet
 ```
 
-Each YAML file under `OSM_PLACES_ROOT` is converted to a GeoJSON FeatureCollection at build time. The `{% place %}` shortcode emits a `<div>` with `data-geojson` pointing to the corresponding file(s); the bundled JS fetches and renders them.
+Each non-private place YAML file under `OSM_PLACES_ROOT` is converted to a GeoJSON FeatureCollection at build time. The `{% place %}` shortcode emits a `<div>` with `data-geojson` pointing to the corresponding file(s); the bundled JS fetches and renders them.
 
 ## Installation
 
@@ -83,7 +83,7 @@ content/
 
 ### locations format (preferred)
 
-The `locations` key holds the list of places. Every other top-level key becomes a **file-level default** applied to all places in the file — per-place values always win.
+The `locations` key holds the list of places. Every other top-level key becomes a **file-level default** applied to all places in the file — per-place values override defaults, except `tags`, which are combined without duplicates (file tags first). An empty `tags: []` does not clear inherited tags.
 
 ```yaml
 # content/places/japan/mygo.yaml
@@ -100,7 +100,7 @@ locations:
     date: 2023-06-29
     country: 日本
     city: 東京
-    tags: []       # overrides file-level tags for this place
+    tags: []       # still inherits the file-level 動畫 tag
     images: []
 ```
 
@@ -108,7 +108,7 @@ Empty strings (`""`) and empty lists (`[]`) are automatically stripped — they 
 
 ### Dict of places (also supported)
 
-The reserved `defaults` key spreads shared attributes. Each other top-level key is a place id usable in `#fragment` references.
+The reserved `defaults` key spreads shared attributes. Each other top-level key supplies the place ID for `#fragment` references unless that record explicitly sets its own `id`.
 
 ```yaml
 defaults:
@@ -138,7 +138,7 @@ shinjuku:
   lon: 121.6213
 ```
 
-A leading `{defaults: {...}}` item sets shared attributes for the whole file.
+A standalone `{defaults: {...}}` item sets defaults for subsequent places. A later defaults item replaces those defaults for the records that follow it.
 
 ## Shortcode syntax
 
@@ -147,8 +147,8 @@ Each `{% place %}` shortcode renders its own independent map.
 | Syntax | Result |
 | --- | --- |
 | `{% place japan/mygo.yaml %}` | All places in one file |
-| `{% place japan/mygo.yaml#normal_park %}` | Single place by id (dict-format key) |
-| `{% place japan/mygo.yaml#豊島区立南池袋第二公園 %}` | Single place by name (fallback) |
+| `{% place japan/mygo.yaml#normal_park %}` | Places matching an explicit `id` or an inferred dict-format key |
+| `{% place japan/mygo.yaml#豊島区立南池袋第二公園 %}` | Places matching the name |
 | `{% place japan/ %}` or `{% place japan %}` | All YAML files in a folder, recursively |
 | `{% place . %}` | All YAML files under the root |
 | `{% place japan/mygo.yaml, taiwan.yml %}` | Multiple specs on one map |
@@ -159,7 +159,7 @@ Each `{% place %}` shortcode renders its own independent map.
 {% place_list japan/tokyo, japan/kyoto %}
 ```
 
-> **Note:** Fragment (`#`) syntax filters which places appear in the popup, but the map still fetches the full GeoJSON file. A future version may support per-feature filtering.
+> **Note:** A fragment matches either `id` or `name`; all matching places are included. The map fetches the full GeoJSON file, then filters features before creating markers. Captions and `place_list` rows are filtered at build time. This controls presentation, not access to the other records in the GeoJSON file.
 
 ## Grouping and summary headers (`place_list`)
 
@@ -227,7 +227,7 @@ hall:
 
 Precedence for column labels: `x-osm-list-i18n.title.<lang>` → `schema.title` → `OSM_LIST_FIELD_LABELS` → auto-derived from key.
 
-`x-` prefixed keys are JSON Schema's standard extension namespace, so validators ignore them silently. Scalar values render unchanged — `datetime.date` becomes ISO string, lists are joined per `x-osm-list-join`.
+These plugin-specific display hints do not change schema validation constraints. Scalar values render unchanged — `datetime.date` becomes ISO string, lists are joined per `x-osm-list-join`.
 
 ### Nested items: one place, many sub-rows
 
@@ -334,7 +334,7 @@ Marker icons only affect `{% place %}` map pins; `{% place_list %}` table column
 | `icon` | — | Emoji shown as the map marker for this place. Overrides any `x-osm-icon` schema mapping. See [Marker icons](#marker-icons). |
 | `osm_type` | — | `node`, `way`, or `relation`. Together with `osm_id`, points the 🗺️ link at the OSM entity page. Not shown as a popup field or list column. |
 | `osm_id` | — | The OpenStreetMap element id. Only used when `osm_type` is also set. Not shown as a popup field or list column. |
-| *(any)* | — | All other fields shown as `Key: Value` lines |
+| *(any non-reserved field)* | — | Shown as `Key: Value` lines; identity, coordinate and internal fields are excluded |
 
 OSM and Google Maps links are **always auto-generated** — from `lat`/`lon` by default, or from `osm_type`/`osm_id` for the 🗺️ link when both are set (see below).
 
@@ -367,7 +367,7 @@ The `label` becomes the link text. When omitted, the link text falls back to the
 
 ## GeoJSON output
 
-Every YAML file is converted to a GeoJSON FeatureCollection at build time, mirroring the source directory structure:
+Non-private place YAML files under `OSM_PLACES_ROOT` are converted to GeoJSON FeatureCollections at build time, mirroring the source directory structure. Invalid places are logged and omitted:
 
 ```text
 content/places/japan/mygo.yaml   →   output/static/places/japan/mygo.geojson
@@ -439,6 +439,7 @@ properties:
       required: [name, lat, lon, country, city]
       additionalProperties: false
       properties:
+        id:       {type: string}
         name:     {type: string, minLength: 1}
         lat:      {type: number, minimum: -90,  maximum: 90}
         lon:      {type: number, minimum: -180, maximum: 180}
@@ -451,7 +452,9 @@ properties:
         images:   {type: array, items: {type: string}}
 ```
 
-Files starting with `_` (e.g. `_schema.yaml`) are never loaded as place data — they're skipped by both the resolver and the GeoJSON exporter.
+Automatic directory discovery and GeoJSON export skip files whose names start with `_` (e.g. `_schema.yaml` and `_common.yaml`). An explicitly named file can still be loaded by the shortcode resolver, but no GeoJSON is exported for it; keep actual place data in non-private files.
+
+Validation checks the source document before file defaults or nested items are expanded. A schema must describe that source shape, including where shared fields are declared.
 
 Unquoted dates (`date: 2026-02-22`) are normalized to ISO 8601 strings before validation, so schemas can use `type: string, format: date` even though PyYAML parses them as `datetime.date`.
 
@@ -500,7 +503,7 @@ Both reference forms are supported:
 - **Same-file**: `$ref: "#/$defs/base_location"` — resolves within the current schema document.
 - **Cross-file**: `$ref: "../_common.yaml#/$defs/base_location"` — the file part is resolved **relative to the directory of the schema file containing the `$ref`**, not the place YAML being validated.
 
-`$ref` can appear either wrapped in `allOf` (as above — the conventional way to combine a reference with sibling keywords under JSON Schema before 2020-12) or directly alongside `properties` at the same level, per [2020-12](https://json-schema.org/draft/2020-12)'s relaxed `$ref` rules:
+`$ref` can appear inside `allOf` as above. With the draft 2020-12 schema used in these examples, it can also appear alongside `properties`:
 
 ```yaml
 items:
@@ -509,14 +512,16 @@ items:
     category: {type: string}
 ```
 
-Either way, fields pulled in via `$ref` are treated as the outer/shared layer: if the referencing schema also declares a `properties` entry with the same name, its version wins. This is what makes "shared defaults, per-category override" work — e.g. a category-specific schema can `$ref` the common `name` field but override its `title` for a locale-specific label. `allOf`/`anyOf`/`oneOf` are all walked, so `$ref` works inside any of them.
+For **display hints**, referenced properties form the shared layer, and locally declared properties take precedence. For example, a category schema can override the shared `name` title. The hint collector walks `allOf`/`anyOf`/`oneOf`; it does not select a validation branch based on each record.
 
-This affects both places `$ref` is used:
+For **validation**, the schema composition rules still apply. `allOf` requires every subschema to pass; a local property does not replace or relax a constraint from the referenced schema.
+
+Reference resolution is used in both paths:
 
 - **Display hints** (`title`, `x-osm-list-hidden`, `x-osm-list-sort`, `x-osm-list-i18n`, `x-osm-icon`) collected for `place_list` columns — resolved fully, including across files.
-- **Validation** — `jsonschema.validate` needs `$ref` targets to actually resolve; the plugin wires up a [`referencing`](https://github.com/python-jsonschema/referencing) registry (a transitive dependency of `jsonschema>=4.18`, so no extra install is needed) so cross-file relative refs work the same way here as they do for display hints.
+- **Validation** — the `jsonschema` validator needs `$ref` targets to actually resolve; the plugin wires up a [`referencing`](https://github.com/python-jsonschema/referencing) registry (a transitive dependency of `jsonschema>=4.18`, so no extra install is needed) so cross-file relative refs work the same way here as they do for display hints.
 
-A broken `$ref` (missing file, unresolvable pointer, or a reference cycle) is logged as a warning and skipped — it never crashes the build.
+The display-hint collector warns and skips missing targets, unresolved pointers and cycles. Validation separately reports unresolved references as errors; with `OSM_VALIDATE_STRICT = True`, those errors fail the build. Display-hint recovery does not guarantee that an invalid or cyclic schema can be validated successfully.
 
 ## Deep linking
 
@@ -555,14 +560,9 @@ Tag badges are clickable in both maps and tables.
 
 ## Customising the CSS
 
-All visual properties are CSS custom properties declared on `:root`. Override in your own stylesheet (loaded after `osm-map.css`):
+Map and popup styles expose CSS custom properties on `:root`. Override them in your own stylesheet (loaded after `osm-map.css`):
 
 ```css
-/* Change map height globally */
-:root {
-  --osm-map-height: 300px;
-}
-
 /* Remove rounded corners and shadow */
 .osm-map-block {
   --osm-radius: 0;
@@ -570,11 +570,13 @@ All visual properties are CSS custom properties declared on `:root`. Override in
 }
 ```
 
-### Available custom properties
+Set `OSM_MAP_HEIGHT = "300px"` in `pelicanconf.py` to change map height globally. Generated maps set `--osm-map-height` inline, so changing that variable on `:root` alone does not override it.
+
+### Common custom properties
 
 | Property | Default | Controls |
 | --- | --- | --- |
-| `--osm-map-height` | `400px` | Map canvas height |
+| `--osm-map-height` | `400px` | Map canvas height; set inline from `OSM_MAP_HEIGHT` |
 | `--osm-radius` | `8px` | Block border radius |
 | `--osm-shadow` | `0 2px 8px …` | Block drop shadow |
 | `--osm-caption-bg` | `#f5f5f5` | Caption bar background |
@@ -604,64 +606,70 @@ All visual properties are CSS custom properties declared on `:root`. Override in
 
 ## i18n
 
-The plugin auto-detects the page language from `<html lang="...">` and applies built-in translations when available. Currently supported: `zh` (Traditional Chinese), `ja` (Japanese). All other languages fall back to English.
+Localization currently has two separate sources:
 
-You can override any string by setting `window.OSM_I18N` **before** loading `osm-map.js`. Manual overrides take priority over auto-detected translations.
+- Python uses the article's `Lang` (falling back to `DEFAULT_LANG`) for schema
+  field titles and table group counts. Use `x-osm-list-i18n.title` and
+  `OSM_LIST_GROUP_COUNT_TEMPLATE` for those strings.
+- JavaScript reads `<html lang="...">` for selected browser messages. Built-in
+  packs cover some messages in `zh` (Traditional Chinese) and `ja` (Japanese);
+  missing messages fall back to English. Matching uses the primary subtag,
+  so `zh-Hans` currently also selects Traditional Chinese.
+
+Set supported browser overrides in `window.OSM_I18N` **before** loading
+`osm-map.js`. They take priority over the built-in browser translations:
 
 ```html
 <script>
 window.OSM_I18N = {
-  // Map link labels (defaults: "OSM", "Google")
-  osmLink:      "OSM",
-  googleLink:   "Google",
-
-  // Place count label below tables (receives row count as argument)
-  placeCount:   (n) => `${n} 個地點`,
-
-  // Error/empty state messages
-  loadError:    "無法載入地圖資料",
-  noPlaces:     "找不到地點",
-
-  // Fallback link text for urls entries with no label.
-  // Defaults to the URL's hostname (e.g. "example.com").
-  // Only used when the hostname cannot be parsed.
-  urlLinkLabel: "Link",
-
-  // Field label overrides — YAML key → display label
-  // Unlisted keys fall back to capitalised key name (e.g. "category" → "Category")
+  placeCount:  (n) => `${n} 個地點`,
+  loadError:   "無法載入地圖資料",
+  noPlaces:    "找不到地點",
+  viewInTable: "在表格中檢視",
+  resetView:   "重設地圖範圍",
   fieldLabels: {
-    date:     "日期",
-    location: "地點",
+    date: "日期",
     category: "分類",
-    type:     "分類",
-    work:     "作品",
-    series:   "系列",
-    note:     "備註",
-    notes:    "備註",
-    anime:    "作品",
-    city:     "城市",
-    country:  "國家",
+    city: "城市",
   },
 };
 </script>
 <script src="/static/pelican_osm/js/osm-map.js" defer></script>
 ```
 
-`fieldLabels` is shallow-merged — only list the keys you want to change.
+`fieldLabels` is shallow-merged; unlisted fields retain built-in labels or use
+capitalised keys. Schema titles also flow through to map popups automatically.
+Popup precedence is: schema label resolved for the article language →
+`window.OSM_I18N.fieldLabels` → built-in browser label → capitalised key.
+`OSM_LIST_FIELD_LABELS` affects table headers, not popup labels.
 
-If you already declare per-field titles in your `_schema.yaml` via `title` and `x-osm-list-i18n.title.<lang>` (which the `place_list` table reads for column headers), those flow through to map popups automatically — no JS override needed. Precedence: schema-driven per-map label > `window.OSM_I18N.fieldLabels` > built-in language pack > capitalised key.
-
-### Available i18n keys
+### Supported browser i18n keys
 
 | Key | Default (en) | Description |
 | --- | --- | --- |
-| `osmLink` | `"OSM"` | OSM link label in popups and tables |
-| `googleLink` | `"Google"` | Google Maps link label |
-| `placeCount` | `(n) => "N places"` | Row count below tables (function) |
+| `placeCount` | `(n) => "N place(s)"` | Table count after JavaScript initialization; singular for 1 |
 | `loadError` | `"Failed to load map data"` | Shown when all GeoJSON fetches fail |
 | `noPlaces` | `"No places found"` | Shown when no markers match |
-| `urlLinkLabel` | `"Link"` | Fallback text for unlabelled URLs |
-| `fieldLabels` | `{}` | YAML key to display label mapping |
+| `viewInTable` | `"View in table"` | Popup link to an existing table row |
+| `resetView` | `"Reset view"` | Reset button tooltip |
+| `fieldLabels` | `{}` | Popup field labels; built-in language packs may supply defaults |
+
+### Current limitations
+
+This is partial UI localization, not automatic translation of place data.
+`window.OSM_I18N` does not control Python-rendered table headers, group counts
+or captions. Captions with more than three names still use `and N more`.
+The layer selector shown for more than ten layers has fixed Chinese labels;
+fullscreen/lightbox controls, photo alternative text and the `Link` fallback
+are also not routed through the translation settings.
+
+Older documentation listed `osmLink`, `googleLink`, `urlLinkLabel` and
+`manyPlaces`; these keys do not affect the current output. Map links use the
+fixed 🗺️ / 📍 icons. The browser settings above apply to the whole page, not
+individual maps, and may differ from an article's `Lang`.
+
+Per-component language and optional data translation are future design work,
+not APIs available in OSM 0.16.1 or tabular 0.8.0.
 
 ## License
 
