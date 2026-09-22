@@ -1,3 +1,9 @@
+## 0.17.0 (2026-09-22)
+
+### Feat
+
+- localize maps and place lists per component
+
 ## 0.16.1 (2026-09-19)
 
 ### Refactor
