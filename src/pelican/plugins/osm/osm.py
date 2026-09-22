@@ -24,6 +24,19 @@ from pelican.plugins.tabular.core import (
 )
 from pelican.plugins.tabular.core import extract_year as _extract_year  # noqa: F401
 from pelican.plugins.tabular.core import extract_years as _extract_years  # noqa: F401
+from pelican.plugins.tabular.i18n import (
+    Catalog,
+    Message,
+    component_attrs,
+    component_locale,
+    format_message,
+    localized_text,
+    other_template,
+    project_record,
+    resolve_text,
+    validate_message,
+    value_lang,
+)
 from pelican.plugins.tabular.rendering import render_table_body
 
 from pelican import signals  # type: ignore[attr-defined]
@@ -58,6 +71,7 @@ except ImportError:
     _HAS_MARKDOWN = False
 
 log = logging.getLogger(__name__)
+CATALOG = Catalog(Path(__file__).with_name("messages.json"))
 
 DEFAULT_SHORTCODE = "place"
 DEFAULT_LIST_SHORTCODE = "place_list"
@@ -72,15 +86,9 @@ DEFAULT_SCHEMA_FILENAMES = ("_schema.yaml", "_schema.yml", "_schema.json")
 # Template for the count line under each group_summary_at header. ``{n}`` is
 # replaced with the number of original places in the group. Override via
 # ``OSM_LIST_GROUP_COUNT_TEMPLATE`` for translation; set to ``""`` to suppress.
-DEFAULT_GROUP_COUNT_TEMPLATE = "{n} places"
-
-# Built-in count templates keyed by BCP-47 primary subtag, mirroring the JS
-# i18n defaults in static/js/osm-map.js. Picked automatically based on the
-# article's ``Lang:`` (or ``DEFAULT_LANG``) when ``OSM_LIST_GROUP_COUNT_TEMPLATE``
-# isn't set explicitly.
+DEFAULT_GROUP_COUNT_TEMPLATE = other_template(CATALOG.defaults["placeCount"])
 BUILTIN_GROUP_COUNT_TEMPLATES = {
-    "zh": "{n} 個地點",
-    "ja": "{n} 件",
+    lang: other_template(CATALOG.resolve(lang)["placeCount"]) for lang in ("zh", "ja")
 }
 
 # Fields never shown as regular columns in the list table.
@@ -145,7 +153,11 @@ def _place_anchor_slug(place: dict[str, Any]) -> str:
     Page-scoped uniqueness (e.g. items expansion or duplicate names) is the
     caller's responsibility — this helper only computes the base slug.
     """
-    raw = place.get("id") or place.get("name")
+    raw = (
+        place.get("id")
+        or place.get("_i18n_source", {}).get("name")
+        or place.get("name")
+    )
     if raw is None or not str(raw).strip():
         return ""
     return _slugify(str(raw))
@@ -980,9 +992,13 @@ class PlaceResolver:
 _MAP_COUNTER = 0  # module-level counter for unique map IDs per process
 
 
-def _geojson_url(yaml_path: Path, root: Path, static_prefix: str) -> str:
+def _geojson_url(
+    yaml_path: Path, root: Path, static_prefix: str, lang: str | None = None
+) -> str:
     """Return the URL for the GeoJSON file corresponding to a YAML path."""
     rel = yaml_path.relative_to(root)
+    if lang:
+        rel = Path("i18n") / lang / rel
     return (
         f"{static_prefix.rstrip('/')}/places/{rel.with_suffix('.geojson').as_posix()}"
     )
@@ -1021,6 +1037,9 @@ def _render_place_html(
     images_map: dict[str, list[str]] | None = None,
     layer_field: str | None = None,
     field_labels: dict[str, str] | None = None,
+    lang: str | None = None,
+    messages: dict[str, Any] | None = None,
+    name_languages: list[str] | None = None,
 ) -> str:
     """Render a single map block that fetches one or more GeoJSON URLs.
 
@@ -1059,18 +1078,29 @@ def _render_place_html(
             f'{_attr(json.dumps(field_labels, ensure_ascii=False))}"'
         )
 
+    words = CATALOG.resolve(lang or "en", messages, path="OSM_MESSAGES")
+    attrs = component_attrs(lang, words) if lang else ""
+    names = [
+        (
+            f'<span lang="{html.escape(name_languages[i], quote=True)}">'
+            f"{html.escape(name)}</span>"
+            if name_languages
+            else html.escape(name)
+        )
+        for i, name in enumerate(names)
+    ]
     CAPTION_MAX = 3
     if len(names) <= CAPTION_MAX:
         captions = ", ".join(names)
     elif names:
-        captions = (
-            ", ".join(names[:CAPTION_MAX]) + f" and {len(names) - CAPTION_MAX} more"
+        captions = ", ".join(names[:CAPTION_MAX]) + html.escape(
+            format_message(words["more"], lang or "en", n=len(names) - CAPTION_MAX)
         )
     else:
         captions = ""
 
     return (
-        f'<div class="osm-map-block">\n'
+        f'<div class="osm-map-block"{attrs}>\n'
         f'  <div id="{map_id}" class="osm-map" '
         f'style="--osm-map-height:{map_height};" '
         f'data-geojson="{entries_attr}" '
@@ -1079,7 +1109,9 @@ def _render_place_html(
         f"{images_attr}"
         f"{layer_field_attr}"
         f"{field_labels_attr}>"
-        f'<div class="osm-map-loading"><div class="osm-map-spinner"></div></div>'
+        f'<div class="osm-map-loading" role="status"'
+        f' aria-label="{html.escape(str(words["loading"]), quote=True)}">'
+        '<div class="osm-map-spinner"></div></div>'
         f"</div>\n"
         f'  <div class="osm-map-caption">{captions}</div>\n'
         f"</div>"
@@ -1132,37 +1164,27 @@ def _resolve_group_count_template(settings: dict[str, Any], lang: str | None) ->
 
     if "OSM_LIST_GROUP_COUNT_TEMPLATE" in settings:
         return cast(str, settings["OSM_LIST_GROUP_COUNT_TEMPLATE"])
-    if lang:
-        full = lang.lower()
-        primary = full.split("-", 1)[0]
-        for key in (full, primary):
-            if key in BUILTIN_GROUP_COUNT_TEMPLATES:
-                return BUILTIN_GROUP_COUNT_TEMPLATES[key]
-    return DEFAULT_GROUP_COUNT_TEMPLATE
+    message = CATALOG.resolve(lang or "en")["placeCount"]
+    return other_template(message)
 
 
 def _resolve_i18n_title(props: dict[str, Any], lang: str | None) -> str | None:
-    """Pick a ``title`` from ``x-osm-list-i18n.title.<lang>`` if present.
-
-    Tries an exact case-insensitive match on the full lang tag first
-    (``zh-tw``), then the primary subtag (``zh``). Returns ``None`` if no
-    match — caller should fall back to the plain ``title`` keyword.
-    """
     if not lang:
         return None
-    i18n = props.get("x-osm-list-i18n")
-    if not isinstance(i18n, dict):
+    titles_config = props.get("x-osm-list-i18n", {})
+    if not isinstance(titles_config, dict):
+        raise ValueError("x-osm-list-i18n: expected a mapping")
+    titles = titles_config.get("title")
+    if titles is None:
         return None
-    titles = i18n.get("title")
-    if not isinstance(titles, dict):
-        return None
-    lower = {k.lower(): v for k, v in titles.items() if isinstance(k, str)}
-    candidate = lower.get(lang.lower())
-    if not isinstance(candidate, str) or not candidate:
-        primary = lang.split("-", 1)[0].lower()
-        if primary != lang.lower():
-            candidate = lower.get(primary)
-    return candidate if isinstance(candidate, str) and candidate else None
+    text, actual = resolve_text(
+        titles,
+        lang,
+        source_lang="und",
+        english_fallback=False,
+        path="x-osm-list-i18n.title",
+    )
+    return text if actual != "und" else None
 
 
 def _build_popup_field_labels(
@@ -1180,8 +1202,8 @@ def _build_popup_field_labels(
         if not isinstance(props, dict):
             continue
         localized = _resolve_i18n_title(props, lang)
-        title = localized or props.get("title")
-        if isinstance(title, str) and title:
+        title = localized if localized is not None else props.get("title")
+        if isinstance(title, str):
             out[field] = title
     return out
 
@@ -1193,10 +1215,13 @@ def _render_place_list_html(
     group_by: list[str] | None = None,
     aggregate: dict[str, str] | None = None,
     group_summary_at: list[str] | None = None,
-    group_count_template: str = DEFAULT_GROUP_COUNT_TEMPLATE,
+    group_count_template: Message = DEFAULT_GROUP_COUNT_TEMPLATE,
     field_schema: dict[str, Any] | None = None,
     lang: str | None = None,
     siteurl: str = "",
+    messages: dict[str, Any] | None = None,
+    translations: dict[str, Any] | None = None,
+    group_count_is_text: bool = False,
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -1221,13 +1246,25 @@ def _render_place_list_html(
         config dict). Recognized hints: ``x-osm-list-join``, ``x-osm-list-sort``.
     """
     field_schema = field_schema or {}
+    words = CATALOG.resolve(lang or "en", messages, path="OSM_MESSAGES")
+    field_labels = {
+        k: localized_text(
+            v, lang or "en", fallback=k, path=f"OSM_LIST_FIELD_LABELS.{k}"
+        )
+        for k, v in field_labels.items()
+    }
     if not places:
         return "<!-- pelican-osm: no places for list -->"
 
     # Flatten nested ``items`` sub-rows into per-item rows. Places without
     # ``items`` pass through. The map shortcode does NOT do this (one pin
     # per parent place, items ignored).
-    places = _expand_items(places)
+    if translations and set(group_by or []) & set(translations.get("fields", [])):
+        raise ValueError("OSM_TRANSLATIONS.fields: group fields must stay canonical")
+    places = [
+        project_record(p, lang or "en", translations, path="OSM_TRANSLATIONS")
+        for p in _expand_items(places)
+    ]
     if not places:
         return "<!-- pelican-osm: no places for list -->"
 
@@ -1265,7 +1302,12 @@ def _render_place_list_html(
         seen: list[str] = []
         for row in rows:
             for k in row:
-                if k not in _LIST_RESERVED and k not in seen and not is_hidden(k):
+                if (
+                    k not in _LIST_RESERVED
+                    and not k.startswith("_")
+                    and k not in seen
+                    and not is_hidden(k)
+                ):
                     seen.append(k)
         fields = seen
     else:
@@ -1283,14 +1325,19 @@ def _render_place_list_html(
         props = field_schema.get(f)
         if isinstance(props, dict):
             localized = _resolve_i18n_title(props, lang)
-            if localized:
+            if localized is not None:
                 return localized
             title = props.get("title")
             if isinstance(title, str) and title:
                 return title
         if f in field_labels:
             return field_labels[f]
-        return fallback if fallback is not None else f.replace("_", " ").capitalize()
+        return str(
+            words.get(
+                "field." + f,
+                fallback if fallback is not None else f.replace("_", " ").capitalize(),
+            )
+        )
 
     def render_tags(tags: Any) -> str:
         if not tags:
@@ -1310,7 +1357,7 @@ def _render_place_list_html(
             if label := u.get("label"):
                 return str(label)
             parsed = urlparse(u["href"])
-            return parsed.netloc or "Link"
+            return parsed.netloc or str(words["link"])
 
         return " ".join(
             f'<a href="{html.escape(_safe_url(u["href"]), quote=True)}">'
@@ -1356,7 +1403,8 @@ def _render_place_list_html(
     def render_name_cell(place: dict[str, Any]) -> str:
         name = str(place.get("name", ""))
         return (
-            f'<td data-sort-value="{html.escape(name, quote=True)}">'
+            f'<td data-sort-value="{html.escape(name, quote=True)}"'
+            f"{value_lang(place, 'name')}>"
             f"{html.escape(name)}"
             f"{render_map_links(place)}</td>"
         )
@@ -1449,14 +1497,17 @@ def _render_place_list_html(
     # Header
     headers = []
     if not name_is_summary:
-        headers.append("<th>" + col_header("name", "Name") + "</th>")
+        headers.append("<th>" + html.escape(col_header("name", "Name")) + "</th>")
     if has_tags:
-        headers.append("<th>" + col_header("tags", "Tags") + "</th>")
-    headers += [f"<th>{col_header(f)}</th>" for f in data_fields]
+        headers.append("<th>" + html.escape(col_header("tags", "Tags")) + "</th>")
+    headers += [f"<th>{html.escape(col_header(f))}</th>" for f in data_fields]
     if has_url:
-        headers.append("<th>" + col_header("urls", "Links") + "</th>")
+        headers.append("<th>" + html.escape(col_header("urls", "Links")) + "</th>")
     if has_images:
-        headers.append('<th class="osm-list-image-col-header">🖼</th>')
+        headers.append(
+            f'<th class="osm-list-image-col-header"'
+            f' aria-label="{html.escape(str(words["photo"]), quote=True)}">🖼</th>'
+        )
     col_count = len(headers)
 
     def render_value_cell(field: str, value: Any) -> str:
@@ -1482,7 +1533,8 @@ def _render_place_list_html(
         if has_tags:
             cells.append(f"<td>{render_tags(row.get('tags', []))}</td>")
         for f in data_fields:
-            cells.append(render_value_cell(f, row.get(f, "")))
+            cell = render_value_cell(f, row.get(f, ""))
+            cells.append(cell.replace("<td", "<td" + value_lang(row, f), 1))
         if has_url:
             cells.append(f"<td>{render_urls(row.get('urls', []))}</td>")
         if has_images:
@@ -1499,6 +1551,8 @@ def _render_place_list_html(
         render_row=render_data_row,
         group_summary_at=group_summary_at,
         group_count_template=group_count_template,
+        lang=lang or "en",
+        text_count=group_count_is_text,
         group_suffix=lambda row, field: (
             render_map_links(row) if field == "name" else ""
         ),
@@ -1517,13 +1571,19 @@ def _render_place_list_html(
             f"{sidecar_json}</script>\n"
         )
 
+    attrs = component_attrs(lang, words) if lang else ""
+    count = (
+        html.escape(format_message(words["placeCount"], lang or "en", n=len(rows)))
+        if lang
+        else ""
+    )
     return (
-        '<div class="osm-place-list-wrapper">\n'
+        f'<div class="osm-place-list-wrapper"{attrs}>\n'
         '<table class="osm-place-list">\n'
         "<thead><tr>" + "".join(headers) + "</tr></thead>\n"
         "<tbody>\n" + body + "\n</tbody>\n"
         "</table>\n"
-        '<div class="osm-place-list-count"></div>\n'
+        f'<div class="osm-place-list-count">{count}</div>\n'
         f"{images_sidecar}"
         "</div>"
     )
@@ -1541,12 +1601,19 @@ def _process_content(
     ``zh-tw``). It controls per-locale schema title lookups via
     ``x-osm-list-i18n``. Falls back to ``settings["DEFAULT_LANG"]`` when None.
     """
+    if settings.get("OSM_TRANSLATIONS") is not None:
+        project_record(
+            {},
+            component_locale(lang, settings.get("DEFAULT_LANG")),
+            settings["OSM_TRANSLATIONS"],
+            path="OSM_TRANSLATIONS",
+        )
     shortcode = settings.get("OSM_SHORTCODE", DEFAULT_SHORTCODE)
     map_height = settings.get("OSM_MAP_HEIGHT", DEFAULT_MAP_HEIGHT)
     tile_url = settings.get("OSM_MAP_TILE", DEFAULT_MAP_TILE)
     attribution = settings.get("OSM_MAP_ATTRIBUTION", DEFAULT_MAP_ATTRIBUTION)
-    static_prefix = settings.get("OSM_STATIC_PREFIX", "/static")
-    siteurl = settings.get("SITEURL", "")
+    siteurl = settings.get("SITEURL", "").rstrip("/")
+    static_prefix = settings.get("OSM_STATIC_PREFIX", siteurl + "/static")
 
     pattern = re.compile(
         r"\{%\s*" + re.escape(shortcode) + r"\s+(.+?)\s*%\}",
@@ -1556,10 +1623,15 @@ def _process_content(
     def replace(match: re.Match) -> str:
         raw_args = match.group(1)
         specs, _kwargs = _parse_shortcode_args(raw_args)
+        locale = component_locale(
+            _kwargs.get("lang"), lang, settings.get("DEFAULT_LANG")
+        )
+        settings.setdefault("_OSM_LOCALES", set()).add(locale)
 
         # Each entry: {"url": "...", "fragment": "name_or_id" | None}
         geojson_entries: list[dict] = []
         names: list[str] = []
+        name_languages: list[str] = []
         images_map: dict[str, list[str]] = {}
 
         for spec in specs:
@@ -1572,7 +1644,12 @@ def _process_content(
 
             yaml_paths = resolver.resolve_to_paths(spec_path)
             for yaml_path in yaml_paths:
-                url = _geojson_url(yaml_path, resolver.root, static_prefix)
+                url = _geojson_url(
+                    yaml_path,
+                    resolver.root,
+                    static_prefix,
+                    locale if settings.get("OSM_TRANSLATIONS") else None,
+                )
                 entry = {"url": url, "fragment": fragment}
                 if entry not in geojson_entries:
                     geojson_entries.append(entry)
@@ -1587,7 +1664,19 @@ def _process_content(
                         if str(p.get("id", "")) == fragment
                         or str(p.get("name", "")) == fragment
                     ]
+                valid = [
+                    project_record(
+                        p,
+                        locale,
+                        settings.get("OSM_TRANSLATIONS"),
+                        path="OSM_TRANSLATIONS",
+                    )
+                    for p in valid
+                ]
                 names.extend(p["name"] for p in valid)
+                name_languages.extend(
+                    p.get("_i18n_langs", {}).get("name", locale) for p in valid
+                )
 
                 # Collect images from places - map by id or name
                 for p in valid:
@@ -1604,7 +1693,11 @@ def _process_content(
                             resolved_images.append(resolved_url)
 
                         # Use id if available, otherwise use name
-                        key = p.get("id") or p.get("name")
+                        key = (
+                            p.get("id")
+                            or p.get("_i18n_source", {}).get("name")
+                            or p.get("name")
+                        )
                         if key:
                             images_map[key] = resolved_images
 
@@ -1615,9 +1708,21 @@ def _process_content(
             (k for k, v in field_schema.items() if v.get("x-osm-map-layer") is True),
             None,
         )
-        popup_labels = _build_popup_field_labels(
-            field_schema, lang or settings.get("DEFAULT_LANG")
-        )
+        if layer_field in (settings.get("OSM_TRANSLATIONS") or {}).get("fields", []):
+            raise ValueError(
+                "OSM_TRANSLATIONS.fields: layer fields must stay canonical"
+            )
+        popup_labels = _build_popup_field_labels(field_schema, locale)
+
+        popup_labels = {
+            **{
+                k: localized_text(
+                    v, locale, fallback=k, path=f"OSM_LIST_FIELD_LABELS.{k}"
+                )
+                for k, v in settings.get("OSM_LIST_FIELD_LABELS", {}).items()
+            },
+            **popup_labels,
+        }
 
         return _render_place_html(
             geojson_entries,
@@ -1628,6 +1733,9 @@ def _process_content(
             images_dict,
             layer_field,
             field_labels=popup_labels,
+            name_languages=name_languages,
+            lang=locale,
+            messages=settings.get("OSM_MESSAGES"),
         )
 
     result = cast(str, pattern.sub(replace, content))
@@ -1641,15 +1749,21 @@ def _process_content(
 
     def replace_list(match: re.Match) -> str:
         specs, kwargs = _parse_shortcode_args(match.group(1))
+        locale = component_locale(
+            kwargs.get("lang"), lang, settings.get("DEFAULT_LANG")
+        )
         places: list[dict[str, Any]] = []
         for spec in specs:
             loaded = resolver.resolve(spec)
-            places.extend(p for p in loaded if _validate_place(p, spec))
+            places.extend(dict(p) for p in loaded if _validate_place(p, spec))
 
         # Normalize urls fields using the incrementally-built article URL map
         for place in places:
             if "urls" in place:
-                place["urls"] = _normalize_url_field(place["urls"], _article_url_map)
+                place["urls"] = _normalize_url_field(
+                    place["urls"],
+                    settings.get("_OSM_CONTEXT", {}).get("url_map", _article_url_map),
+                )
 
         field_labels: dict[str, str] = settings.get("OSM_LIST_FIELD_LABELS", {})
         list_fields: list[str] = settings.get("OSM_LIST_FIELDS", [])
@@ -1657,9 +1771,13 @@ def _process_content(
         group_by = _parse_csv_kwarg(kwargs.get("group_by", ""))
         aggregate = _parse_aggregate_kwarg(kwargs.get("aggregate", ""))
         group_summary_at = _parse_csv_kwarg(kwargs.get("group_summary_at", ""))
-        group_count_template = _resolve_group_count_template(
-            settings, lang or settings.get("DEFAULT_LANG")
+        group_count_template = settings.get(
+            "OSM_LIST_GROUP_COUNT_TEMPLATE",
+            CATALOG.resolve(locale, settings.get("OSM_MESSAGES"), path="OSM_MESSAGES")[
+                "placeCount"
+            ],
         )
+        validate_message(group_count_template, {"n"}, "OSM_LIST_GROUP_COUNT_TEMPLATE")
         field_schema = _resolve_schema_properties(specs, resolver, settings)
 
         return _render_place_list_html(
@@ -1671,7 +1789,10 @@ def _process_content(
             group_summary_at=group_summary_at,
             group_count_template=group_count_template,
             field_schema=field_schema,
-            lang=lang or settings.get("DEFAULT_LANG"),
+            lang=locale,
+            messages=settings.get("OSM_MESSAGES"),
+            translations=settings.get("OSM_TRANSLATIONS"),
+            group_count_is_text="OSM_LIST_GROUP_COUNT_TEMPLATE" not in settings,
             siteurl=siteurl,
         )
 
@@ -1789,7 +1910,9 @@ def _init_resolver(pelican_obj: Any) -> None:
     if not is_subsite:
         _article_url_map = {}
 
+    _article_url_map = dict(_article_url_map)
     _settings = pelican_obj.settings
+    _settings["_OSM_LOCALES"] = set()
 
     # Pelican's PATH setting may be relative.
     # Resolve it against the directory containing pelicanconf.py when possible,
@@ -1810,6 +1933,12 @@ def _init_resolver(pelican_obj: Any) -> None:
         root = (content_path / root).resolve()
 
     _resolver = PlaceResolver(root)
+    _settings["_OSM_CONTEXT"] = {
+        "resolver": _resolver,
+        "content_path": content_path,
+        "url_map": _article_url_map,
+        "errors": [],
+    }
     log.debug("pelican-osm: content_path=%s", content_path)
     log.debug("pelican-osm: places root=%s exists=%s", root, root.exists())
 
@@ -1823,11 +1952,22 @@ def _process_article(content: Any) -> None:
     if not isinstance(content, (Article, Page)):
         return
 
+    content_settings = getattr(content, "settings", {})
+    settings = (
+        content_settings
+        if isinstance(content_settings, dict) and "_OSM_CONTEXT" in content_settings
+        else _settings
+    )
+    context = settings.get("_OSM_CONTEXT", {})
+    resolver = context.get("resolver", _resolver)
+    content_path = context.get("content_path", _content_path)
+    url_map = context.get("url_map", _article_url_map)
+
     # Build the article URL map incrementally so place_list shortcodes on
     # pages can resolve {filename} references to articles processed earlier.
     # Keys are stored both as absolute paths and as content-relative paths so
     # that {filename}posts/foo.md references resolve correctly.
-    siteurl = _settings.get("SITEURL", "").rstrip("/")
+    siteurl = settings.get("SITEURL", "").rstrip("/")
     src = getattr(content, "source_path", None)
     url = getattr(content, "url", None)
     if src and url:
@@ -1835,22 +1975,27 @@ def _process_article(content: Any) -> None:
         # setdefault: first write wins. When i18n_subsites processes an
         # untranslated article as a fallback, its URL (e.g. /en/post-zh-tw.html)
         # must not overwrite the canonical main-site URL already in the map.
-        _article_url_map.setdefault(src, abs_url)
-        if _content_path:
+        url_map.setdefault(src, abs_url)
+        if content_path:
             try:
-                rel = Path(src).relative_to(_content_path)
-                _article_url_map.setdefault(str(rel), abs_url)
+                rel = Path(src).relative_to(content_path)
+                url_map.setdefault(str(rel), abs_url)
             except ValueError:
                 pass
 
-    if _resolver is None:
+    if resolver is None:
         return
 
     if hasattr(content, "_content"):
-        article_lang = getattr(content, "lang", None) or _settings.get("DEFAULT_LANG")
-        content._content = _process_content(
-            content._content, _resolver, _settings, lang=article_lang
-        )
+        article_lang = getattr(content, "lang", None) or settings.get("DEFAULT_LANG")
+        try:
+            content._content = _process_content(
+                content._content, resolver, settings, lang=article_lang
+            )
+        except (ValueError, TypeError) as exc:
+            context.setdefault("errors", []).append(str(exc))
+            log.error("pelican-osm: %s", exc)
+            raise
 
 
 def _build_article_url_map(pelican_obj: Any) -> dict[str, str]:
@@ -1973,9 +2118,9 @@ def _place_to_feature(
 
     properties = {}
     for k, v in place.items():
-        if k in ("lat", "lon", "images", "items", "icon"):
+        if k in ("lat", "lon", "images", "items", "icon") or k.startswith("_i18n_"):
             continue
-        if v == "" or v == [] or v is None:
+        if k != "name" and (v == "" or v == [] or v is None):
             continue
         if isinstance(v, (datetime.date, datetime.datetime)):
             v = v.isoformat()
@@ -1991,6 +2136,11 @@ def _place_to_feature(
     if "urls" in properties:
         properties["urls"] = _normalize_url_field(properties["urls"], article_url_map)
 
+    if "_i18n_source" in place:
+        properties["_osm_source_name"] = place["_i18n_source"].get(
+            "name", place.get("name")
+        )
+        properties["_osm_languages"] = place["_i18n_langs"]
     slug = _place_anchor_slug(place)
     if slug:
         properties["slug"] = slug
@@ -2013,6 +2163,8 @@ def _yaml_to_geojson(
     yaml_path: Path,
     article_url_map: dict[str, str] | None = None,
     field_schema: dict[str, Any] | None = None,
+    lang: str = "en",
+    translations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Load a YAML file and return a GeoJSON FeatureCollection."""
     places = _load_yaml_file(yaml_path)
@@ -2020,7 +2172,12 @@ def _yaml_to_geojson(
     return {
         "type": "FeatureCollection",
         "features": [
-            _place_to_feature(p, article_url_map, field_schema) for p in valid
+            _place_to_feature(
+                project_record(p, lang, translations, path="OSM_TRANSLATIONS"),
+                article_url_map,
+                field_schema,
+            )
+            for p in valid
         ],
     }
 
@@ -2030,11 +2187,16 @@ def _export_geojson(pelican_obj: Any) -> None:
 
     Written relative to the site's output directory.
     """
-    if _resolver is None:
+    context = pelican_obj.settings.get("_OSM_CONTEXT", {})
+    if context.get("errors"):
+        raise ValueError(
+            "pelican-osm: invalid configuration: " + "; ".join(context["errors"])
+        )
+    resolver = context.get("resolver", _resolver)
+    if resolver is None:
         return
-
     output = Path(pelican_obj.settings.get("OUTPUT_PATH", "output"))
-    root = _resolver.root
+    root = resolver.root
 
     if not root.exists():
         return
@@ -2082,12 +2244,39 @@ def _export_geojson(pelican_obj: Any) -> None:
                 field_schema_cache[schema_path] = walked
             field_schema = field_schema_cache[schema_path]
 
-        geojson = _yaml_to_geojson(yaml_path, _article_url_map, field_schema)
-        dest.write_text(
-            json.dumps(geojson, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        translations = pelican_obj.settings.get("OSM_TRANSLATIONS")
+        locales = (
+            sorted(pelican_obj.settings.get("_OSM_LOCALES", set()))
+            if translations
+            else []
         )
-        log.debug("pelican-osm: wrote %s (%d features)", dest, len(geojson["features"]))
+        if translations and not locales:
+            locales = [component_locale(pelican_obj.settings.get("DEFAULT_LANG"))]
+        for locale in locales if translations else [None]:
+            destination = (
+                dest
+                if locale is None
+                else output
+                / "static/places/i18n"
+                / locale
+                / rel.with_suffix(".geojson")
+            )
+            geojson = _yaml_to_geojson(
+                yaml_path,
+                context.get("url_map", _article_url_map),
+                field_schema,
+                lang=locale or (translations or {}).get("source_lang", "und"),
+                translations=translations,
+            )
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_text(
+                json.dumps(geojson, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            log.debug(
+                "pelican-osm: wrote %s (%d features)",
+                destination,
+                len(geojson["features"]),
+            )
 
 
 def _copy_static(pelican_obj: Any) -> None:
@@ -2100,7 +2289,21 @@ def _copy_static(pelican_obj: Any) -> None:
         if dest.exists():
             shutil.rmtree(dest)
         shutil.copytree(static_src, dest)
-        bundle_legacy_assets(dest / "js/osm-map.js", dest / "css/osm-map.css")
+        script = dest / "js/osm-map.js"
+        fallback = json.dumps(
+            {
+                "locale": component_locale(pelican_obj.settings.get("DEFAULT_LANG")),
+                "words": CATALOG.resolve(
+                    component_locale(pelican_obj.settings.get("DEFAULT_LANG"))
+                ),
+            },
+            ensure_ascii=False,
+        )
+        script.write_text(
+            "window.OSM_DEFAULT_I18N = " + fallback + ";\n" + script.read_text("utf-8"),
+            encoding="utf-8",
+        )
+        bundle_legacy_assets(script, dest / "css/osm-map.css")
         log.debug("pelican-osm: copied static assets to %s", dest)
 
 

@@ -20,7 +20,7 @@
 - Reset view button (↺) to return to the original map bounds
 - Deep linking — link directly to a place via URL hash (e.g. `page.html#place_id`)
 - Error/empty state messages when data fails to load
-- Selected browser UI messages use `<html lang>` for built-in translations (zh, ja), with overrides via `window.OSM_I18N`; see [i18n](#i18n) for coverage and limitations
+- Per-component English, Traditional Chinese and Japanese UI, translated labels and optional place-data translations; see [i18n](#i18n)
 - Optional [JSON Schema](https://json-schema.org/) validation for place YAML — drop a `_schema.yaml` next to your files and the plugin enforces it at build time
 - Class-based CSS with custom properties for map, popup and table styling
 - Dark mode support
@@ -213,7 +213,7 @@ properties:
 | `x-osm-list-hidden` | `true` / `false` | Drop this field from the table. It's still loaded, so `group_by` / `aggregate` / sort can use it. Works for `tags` / `urls` too. |
 | `x-osm-list-join` | any string (default `", "`) | Separator between list items when a field holds a list (e.g. multiple visit dates). |
 | `x-osm-list-sort` | `min` / `max` / `first` / `last` | Sets the cell's `data-sort-value` so column sorting picks one canonical key. `max` = most-recent visit drives the sort. |
-| `x-osm-list-i18n` | `{ title: { <lang>: <string> } }` | Per-language overrides for `title`. Looked up by the article's `Lang` (or `DEFAULT_LANG`) — full match first (`zh-tw`), then primary subtag (`zh`). Falls through to `title` when nothing matches. |
+| `x-osm-list-i18n` | `{ title: { <lang>: <string> } }` | Per-language overrides for `title`. Looked up by the article's `Lang` (or `DEFAULT_LANG`) — exact match first, then compatible same-script resources. Falls through to `title` when nothing matches. |
 
 ```yaml
 hall:
@@ -387,7 +387,7 @@ Feature properties may include an internal `_osm_icon` key — the computed fina
 | `OSM_MAP_HEIGHT` | `"400px"` | Map height (any CSS length value) |
 | `OSM_MAP_TILE` | OSM standard tiles | Leaflet tile URL template |
 | `OSM_MAP_ATTRIBUTION` | OSM attribution HTML | Attribution string shown on the map |
-| `OSM_STATIC_PREFIX` | `"/static"` | URL prefix for generated GeoJSON files |
+| `OSM_STATIC_PREFIX` | `SITEURL + "/static"` | URL prefix for generated GeoJSON files |
 | `OSM_LIST_SHORTCODE` | `"place_list"` | Shortcode name |
 | `OSM_LIST_FIELDS` | `[]` (auto) | Ordered list of field keys to show as columns. When empty, all non-reserved fields found in the data are used. |
 | `OSM_LIST_FIELD_LABELS` | `{}` | Override column header labels, e.g. `{"date": "Visited", "name": "Place"}` |
@@ -606,70 +606,24 @@ Set `OSM_MAP_HEIGHT = "300px"` in `pelicanconf.py` to change map height globally
 
 ## i18n
 
-Localization currently has two separate sources:
+Both `{% place %}` and `{% place_list %}` accept `lang="ja"`. Language priority
+is shortcode → article/page `Lang` → this build's `DEFAULT_LANG` → English.
+The selected language applies to table labels/counts, captions, maps, popups,
+layer controls and photo lightboxes, including multiple languages on one page.
 
-- Python uses the article's `Lang` (falling back to `DEFAULT_LANG`) for schema
-  field titles and table group counts. Use `x-osm-list-i18n.title` and
-  `OSM_LIST_GROUP_COUNT_TEMPLATE` for those strings.
-- JavaScript reads `<html lang="...">` for selected browser messages. Built-in
-  packs cover some messages in `zh` (Traditional Chinese) and `ja` (Japanese);
-  missing messages fall back to English. Matching uses the primary subtag,
-  so `zh-Hans` currently also selects Traditional Chinese.
+English, Traditional Chinese and Japanese catalogs share tabular's locale and
+plural helpers. Matching preserves scripts: `zh-Hans` falls back to English,
+while `zh-TW`, `zh-Hant` and legacy bare `zh` use Traditional Chinese.
 
-Set supported browser overrides in `window.OSM_I18N` **before** loading
-`osm-map.js`. They take priority over the built-in browser translations:
+`OSM_MESSAGES` configures messages at build time. Existing `window.OSM_I18N`
+overrides and function-valued `placeCount` remain supported. Schema labels and
+`OSM_LIST_FIELD_LABELS` apply to both table headers and popup fields.
 
-```html
-<script>
-window.OSM_I18N = {
-  placeCount:  (n) => `${n} 個地點`,
-  loadError:   "無法載入地圖資料",
-  noPlaces:    "找不到地點",
-  viewInTable: "在表格中檢視",
-  resetView:   "重設地圖範圍",
-  fieldLabels: {
-    date: "日期",
-    category: "分類",
-    city: "城市",
-  },
-};
-</script>
-<script src="/static/pelican_osm/js/osm-map.js" defer></script>
-```
+`OSM_TRANSLATIONS` optionally projects allowlisted place text (such as `name`
+and `note`) into the selected language. IDs, coordinates, source-name fragments
+and photo identities stay stable. Translated GeoJSON uses separate locale paths.
 
-`fieldLabels` is shallow-merged; unlisted fields retain built-in labels or use
-capitalised keys. Schema titles also flow through to map popups automatically.
-Popup precedence is: schema label resolved for the article language →
-`window.OSM_I18N.fieldLabels` → built-in browser label → capitalised key.
-`OSM_LIST_FIELD_LABELS` affects table headers, not popup labels.
-
-### Supported browser i18n keys
-
-| Key | Default (en) | Description |
-| --- | --- | --- |
-| `placeCount` | `(n) => "N place(s)"` | Table count after JavaScript initialization; singular for 1 |
-| `loadError` | `"Failed to load map data"` | Shown when all GeoJSON fetches fail |
-| `noPlaces` | `"No places found"` | Shown when no markers match |
-| `viewInTable` | `"View in table"` | Popup link to an existing table row |
-| `resetView` | `"Reset view"` | Reset button tooltip |
-| `fieldLabels` | `{}` | Popup field labels; built-in language packs may supply defaults |
-
-### Current limitations
-
-This is partial UI localization, not automatic translation of place data.
-`window.OSM_I18N` does not control Python-rendered table headers, group counts
-or captions. Captions with more than three names still use `and N more`.
-The layer selector shown for more than ten layers has fixed Chinese labels;
-fullscreen/lightbox controls, photo alternative text and the `Link` fallback
-are also not routed through the translation settings.
-
-Older documentation listed `osmLink`, `googleLink`, `urlLinkLabel` and
-`manyPlaces`; these keys do not affect the current output. Map links use the
-fixed 🗺️ / 📍 icons. The browser settings above apply to the whole page, not
-individual maps, and may differ from an article's `Lang`.
-
-Per-component language and optional data translation are future design work,
-not APIs available in OSM 0.16.1 or tabular 0.8.0.
+See [configuration and migration](docs/i18n.md).
 
 ## License
 
@@ -678,7 +632,7 @@ MIT © Wei Lee
 
 ## Shared table core
 
-OSM depends on `pelican-tabular>=0.7.0` for table grouping, aggregation,
+OSM depends on `pelican-tabular>=0.9.0` for component localization, table grouping, aggregation,
 sorting, tag filtering, group collapse and table CSS. OSM retains place data,
 schema hints, map links and photo lightboxes. Both plugins may be enabled;
 shared assets are registered once, including when only OSM is enabled.
@@ -691,7 +645,8 @@ when a page also selects an optional tabular database view. Database controls
 are excluded from the OSM bundle.
 
 Install development dependencies with `uv sync --locked`. The lockfile uses
-the published tabular package from PyPI; a sibling checkout is not required.
+tabular 0.9.0 from PyPI, which provides the shared i18n API; a sibling source
+checkout is not required.
 
 CI checks out the browser fixtures at the locked tabular version's tag and
 runs them with OSM's environment, so rendering and assets use the installed
