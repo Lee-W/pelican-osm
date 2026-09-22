@@ -18,60 +18,25 @@
 (function () {
   "use strict";
 
-  // ── i18n defaults (English) ───────────────────────────────────
-  const DEFAULT_I18N = {
-    osmLink: "OSM",
-    googleLink: "Google",
-    placeCount: (n) => `${n} place${n === 1 ? "" : "s"}`,
-    viewInTable: "View in table",
-    fieldLabels: {},
-  };
-
-  // Built-in translations keyed by language prefix
-  const BUILTIN_I18N = {
-    zh: {
-      placeCount: (n) => `${n} 個地點`,
-      loadError: "無法載入地圖資料",
-      noPlaces: "找不到地點",
-      viewInTable: "在表格中檢視",
-      fieldLabels: {
-        date: "日期",
-        category: "分類",
-        type: "分類",
-        city: "城市",
-        country: "國家",
-        notes: "備註",
-        note: "備註",
-        anime: "作品",
-        work: "作品",
-        series: "系列",
-      },
-    },
-    ja: {
-      placeCount: (n) => `${n} 件`,
-      loadError: "地図データの読み込みに失敗しました",
-      noPlaces: "場所が見つかりません",
-      fieldLabels: {},
-    },
-  };
-
-  // Detect language from <html lang="...">
-  function detectBuiltinI18n() {
-    const lang = (document.documentElement.lang || "").toLowerCase();
-    if (!lang) return {};
-    // Try exact match first (e.g. "zh-tw"), then prefix (e.g. "zh")
-    return BUILTIN_I18N[lang] || BUILTIN_I18N[lang.split("-")[0]] || {};
+  // Every component carries its build-time catalog. The generated default is
+  // only for old markup. Legacy window.OSM_I18N overrides still win.
+  function contextFor(element) {
+    const component = window.Tabular.componentI18n(element);
+    const fallback = window.OSM_DEFAULT_I18N || { words: {} };
+    const words = Object.keys(component.words).length ? component.words : fallback.words;
+    const overrides = window.OSM_I18N || {};
+    const locale = component.locale || fallback.locale || "en";
+    const result = { ...words, ...overrides, locale,
+      dir: element.closest("[dir]")?.dir || "ltr",
+      fieldLabels: { ...Object.fromEntries(Object.entries(words)
+        .filter(([key]) => key.startsWith("field.")).map(([key, value]) => [key.slice(6), value])),
+        ...overrides.fieldLabels },
+    };
+    result.format = (key, values) => window.Tabular.formatMessage(result[key], values, locale);
+    result.formatCount = typeof result.placeCount === "function" ? result.placeCount
+      : (n) => result.format("placeCount", { n });
+    return result;
   }
-
-  const detectedI18n = detectBuiltinI18n();
-  // Priority: user overrides > detected language > defaults
-  const i18n = Object.assign({}, DEFAULT_I18N, detectedI18n, window.OSM_I18N || {});
-  i18n.fieldLabels = Object.assign(
-    {},
-    DEFAULT_I18N.fieldLabels,
-    detectedI18n.fieldLabels || {},
-    (window.OSM_I18N || {}).fieldLabels,
-  );
 
   // ── Dynamic loader for Leaflet.markercluster ──────────────────
   const MARKERCLUSTER_CDN = "https://unpkg.com/leaflet.markercluster@1/dist";
@@ -150,17 +115,17 @@
 
   const OSM_ENTITY_TYPES = new Set(["node", "way", "relation"]);
 
-  function fieldLabel(key, perMapLabels) {
+  function fieldLabel(key, perMapLabels, i18n) {
     // Precedence: schema-supplied per-map label (locale-aware, built at
     // render time) > globally configured/built-in i18n.fieldLabels >
     // derived from the field name itself.
-    if (perMapLabels && perMapLabels[key]) return perMapLabels[key];
-    if (i18n.fieldLabels[key]) return i18n.fieldLabels[key];
+    if (perMapLabels && Object.hasOwn(perMapLabels, key)) return perMapLabels[key];
+    if (Object.hasOwn(i18n.fieldLabels, key)) return i18n.fieldLabels[key];
     return key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, " ");
   }
 
   // ── Popup builder ─────────────────────────────────────────────
-  function buildPopupHtml(props, lat, lon, images, perMapLabels) {
+  function buildPopupHtml(props, lat, lon, images, perMapLabels, i18n) {
     const tagBadges =
       Array.isArray(props.tags) && props.tags.length
         ? `<div class="osm-popup-tags">${props.tags
@@ -172,10 +137,10 @@
         : "";
 
     const fieldLines = Object.entries(props)
-      .filter(([key]) => !HIDDEN_FIELDS.has(key))
+      .filter(([key]) => !HIDDEN_FIELDS.has(key) && !key.startsWith("_osm_"))
       .map(
         ([key, value]) =>
-          `<div class="osm-popup-field"><span class="osm-popup-label">${esc(fieldLabel(key, perMapLabels))}:</span> ${esc(value)}</div>`,
+          `<div class="osm-popup-field"><span class="osm-popup-label">${esc(fieldLabel(key, perMapLabels, i18n))}:</span> <span lang="${esc(props._osm_languages?.[key] || i18n.locale)}">${esc(value)}</span></div>`,
       )
       .join("");
 
@@ -208,7 +173,7 @@
                 try {
                   text = new URL(href).hostname;
                 } catch {
-                  text = "Link";
+                  text = i18n.link;
                 }
               }
               return `<a href="${esc(safeUrl(href))}" target="_blank" rel="noopener">${esc(text)}</a>`;
@@ -223,7 +188,7 @@
           images
             .map(
               (img, idx) =>
-                `<img src="${esc(safeUrl(img))}" alt="Place photo" class="osm-popup-photo" data-fullsrc="${esc(safeUrl(img))}" data-photo-idx="${idx}">`,
+                `<img src="${esc(safeUrl(img))}" alt="${esc(i18n.photo)}" class="osm-popup-photo" data-fullsrc="${esc(safeUrl(img))}" data-photo-idx="${idx}">`,
             )
             .join("") +
           `</div>`
@@ -250,8 +215,8 @@
       : "";
 
     return (
-      `<div class="osm-popup">` +
-      `<strong class="osm-popup-name">${esc(props.name)}</strong>` +
+      `<div class="osm-popup" lang="${esc(i18n.locale)}" dir="${esc(i18n.dir)}">` +
+      `<strong class="osm-popup-name" lang="${esc(props._osm_languages?.name || i18n.locale)}">${esc(props.name)}</strong>` +
       tagBadges +
       fieldLines +
       links +
@@ -271,19 +236,22 @@
     imagesMap,
     layerField,
     perMapLabels,
+    i18n,
   ) {
     for (const feature of features) {
       if (feature.geometry?.type !== "Point") continue;
       const props = feature.properties || {};
-      if (!props.name) continue;
+      if (props.name === undefined || props.name === null) continue;
 
       // Fragment filter: match by id or name
-      if (fragment && props.id !== fragment && props.name !== fragment)
+      if (fragment && props.id !== fragment && props.name !== fragment && props._osm_source_name !== fragment)
         continue;
 
       const [lon, lat] = feature.geometry.coordinates;
       const marker = props._osm_icon
         ? L.marker([lat, lon], {
+            title: props.name || i18n.fieldLabels.name,
+            alt: props.name || i18n.fieldLabels.name,
             icon: L.divIcon({
               html: `<span class="osm-marker-icon">${esc(props._osm_icon)}</span>`,
               className: "osm-marker-icon-wrapper",
@@ -292,16 +260,17 @@
               popupAnchor: [0, -28],
             }),
           })
-        : L.marker([lat, lon]);
+        : L.marker([lat, lon], { title: props.name || i18n.fieldLabels.name, alt: props.name || i18n.fieldLabels.name });
       marker.addTo(layer);
-      const placeKey = props.id || props.name;
+      const placeKey = props.id || props._osm_source_name || props.name;
       marker._osmPlaceId = props.id || null;
       marker._osmPlaceName = props.name;
+      marker._osmSourceName = props._osm_source_name;
       marker._osmPlaceSlug = props.slug || null;
       marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
       marker._osmLayer = layerField ? (props[layerField] || null) : null;
       const images = imagesMap[placeKey] || [];
-      marker.bindPopup(buildPopupHtml(props, lat, lon, images, perMapLabels), {
+      marker.bindPopup(buildPopupHtml(props, lat, lon, images, perMapLabels, i18n), {
         maxWidth: 280,
       });
       markers.push(marker);
@@ -309,10 +278,11 @@
   }
 
   // ── Fullscreen handler ────────────────────────────────────────
-  function setupFullscreenButton(mapContainer, mapElement) {
+  function setupFullscreenButton(mapContainer, mapElement, i18n) {
     const fsBtn = document.createElement("button");
     fsBtn.className = "osm-fullscreen-btn";
-    fsBtn.setAttribute("title", "Toggle fullscreen");
+    fsBtn.setAttribute("title", i18n.fullscreen);
+    fsBtn.setAttribute("aria-label", i18n.fullscreen);
     fsBtn.innerHTML = "⛶";
 
     fsBtn.addEventListener("click", async (e) => {
@@ -410,10 +380,11 @@
   }
 
   // ── Reset view button ──────────────────────────────────────────
-  function setupResetButton(mapEl, map, initialView) {
+  function setupResetButton(mapEl, map, initialView, i18n) {
     const btn = document.createElement("button");
     btn.className = "osm-reset-btn";
-    btn.setAttribute("title", i18n.resetView || "Reset view");
+    btn.setAttribute("title", i18n.resetView);
+    btn.setAttribute("aria-label", i18n.resetView);
     btn.innerHTML = "↺";
 
     btn.addEventListener("click", (e) => {
@@ -533,10 +504,10 @@
   }
 
   // ── Layer filter (x-osm-map-layer field) ─────────────────────
-  function setupMapLayerFilter(mapEl, filterCtx) {
+  function setupMapLayerFilter(mapEl, filterCtx, i18n, perMapLabels, layerField) {
     const { state, apply, markers } = filterCtx;
 
-    const allLayers = [...new Set(markers.map((m) => m._osmLayer).filter(Boolean))].sort();
+    const allLayers = [...new Set(markers.map((m) => m._osmLayer).filter(Boolean))].sort((a, b) => window.Tabular.compare(a, b, "asc", i18n.locale));
     if (allLayers.length <= 1) return;
 
     const mapBlock = mapEl.closest(".osm-map-block");
@@ -549,14 +520,14 @@
       // ── Select + explicit clear button ──────────────────────
       const labelEl = document.createElement("label");
       labelEl.className = "osm-map-layer-label";
-      labelEl.textContent = "作品：";
+      labelEl.textContent = perMapLabels?.[layerField] ?? i18n.layer;
 
       const select = document.createElement("select");
       select.className = "osm-map-layer-select";
 
       const defaultOpt = document.createElement("option");
       defaultOpt.value = "";
-      defaultOpt.textContent = `全部（${allLayers.length}）`;
+      defaultOpt.textContent = i18n.format("allLayers", { n: allLayers.length });
       select.appendChild(defaultOpt);
       for (const layer of allLayers) {
         const opt = document.createElement("option");
@@ -568,7 +539,8 @@
       const clearBtn = document.createElement("button");
       clearBtn.className = "osm-map-layer-clear";
       clearBtn.textContent = "✕";
-      clearBtn.title = "清除篩選";
+      clearBtn.title = i18n.clearFilter;
+      clearBtn.setAttribute("aria-label", i18n.clearFilter);
       clearBtn.style.display = "none";
 
       function syncClearBtn() {
@@ -648,6 +620,7 @@
 
   // ── Map init ──────────────────────────────────────────────────
   async function initMap(el) {
+    const i18n = contextFor(el);
     const rawEntries = el.getAttribute("data-geojson");
     const tileUrl = el.getAttribute("data-tile");
     const attribution = el.getAttribute("data-attribution");
@@ -680,7 +653,8 @@
     const loader = el.querySelector(".osm-map-loading");
     if (loader) loader.remove();
 
-    const map = L.map(el.id);
+    const map = L.map(el.id, { zoomControl: false });
+    L.control.zoom({ zoomInTitle: i18n.zoomIn, zoomOutTitle: i18n.zoomOut }).addTo(map);
     el._leaflet_map = map;
     L.tileLayer(tileUrl, { attribution, maxZoom: 18 }).addTo(map);
 
@@ -714,6 +688,7 @@
           imagesData,
           layerField,
           perMapLabels,
+          i18n,
         );
       } else {
         fetchErrors++;
@@ -726,8 +701,8 @@
       msg.className = "osm-map-empty";
       msg.textContent =
         fetchErrors === entries.length
-          ? (i18n.loadError || "Failed to load map data")
-          : (i18n.noPlaces || "No places found");
+          ? i18n.loadError
+          : i18n.noPlaces;
       el.appendChild(msg);
       return;
     }
@@ -738,7 +713,7 @@
     }
 
     // Setup fullscreen button
-    setupFullscreenButton(el, el);
+    setupFullscreenButton(el, el, i18n);
 
     // Set map view and save initial bounds for reset
     let initialView;
@@ -754,7 +729,7 @@
     }
 
     // Reset view button
-    setupResetButton(el, map, initialView);
+    setupResetButton(el, map, initialView, i18n);
 
     // Shared filter state — both tag and layer filters use AND logic
     const filterCtx = makeFilterState(map, markers, clusterGroup, initialView);
@@ -763,13 +738,15 @@
     setupMapTagFilter(el, filterCtx);
 
     // Layer filtering (x-osm-map-layer field)
-    setupMapLayerFilter(el, filterCtx);
+    setupMapLayerFilter(el, filterCtx, i18n, perMapLabels, layerField);
 
     // Scroll popup to top on open so name/info is visible before photos
     map.on("popupopen", (e) => {
       requestAnimationFrame(() => {
         const popupEl = e.popup.getElement();
         if (!popupEl) return;
+        const close = popupEl.querySelector(".leaflet-popup-close-button");
+        if (close) { close.title = i18n.popupClose; close.setAttribute("aria-label", i18n.popupClose); }
         const wrapper = popupEl.querySelector(".leaflet-popup-content-wrapper");
         const content = popupEl.querySelector(".leaflet-popup-content");
         if (wrapper) wrapper.scrollTop = 0;
@@ -790,6 +767,7 @@
         (m) =>
           m._osmPlaceId === hash ||
           m._osmPlaceName === hash ||
+          m._osmSourceName === hash ||
           (slugFromAnchor && m._osmPlaceSlug === slugFromAnchor),
       );
       if (!target) return;
@@ -809,15 +787,16 @@
   function setupPhotoLightbox() {
     let currentIdx = 0;
     let currentImages = [];
+    let currentI18n;
 
     const lightboxHtml = `
       <div id="osm-photo-lightbox" class="osm-lightbox" tabindex="-1">
         <div class="osm-lightbox-overlay"></div>
         <div class="osm-lightbox-container" tabindex="-1">
-          <button class="osm-lightbox-close" title="Close (Esc)">&times;</button>
-          <button class="osm-lightbox-prev" title="Previous (←)">&lsaquo;</button>
+          <button class="osm-lightbox-close">&times;</button>
+          <button class="osm-lightbox-prev">&lsaquo;</button>
           <img class="osm-lightbox-image" src="" alt="">
-          <button class="osm-lightbox-next" title="Next (→)">&rsaquo;</button>
+          <button class="osm-lightbox-next">&rsaquo;</button>
           <div class="osm-lightbox-info"></div>
         </div>
       </div>
@@ -834,12 +813,19 @@
     const overlay = lightbox.querySelector(".osm-lightbox-overlay");
     const container = lightbox.querySelector(".osm-lightbox-container");
 
-    function showLightbox(idx, images) {
+    function showLightbox(idx, images, origin) {
+      currentI18n = contextFor(origin);
+      lightbox.lang = currentI18n.locale;
+      lightbox.dir = currentI18n.dir;
+      lightboxImg.alt = currentI18n.photo;
+      for (const [button, key] of [[closeBtn, "close"], [prevBtn, "previous"], [nextBtn, "next"]]) {
+        button.title = currentI18n[key]; button.setAttribute("aria-label", currentI18n[key]);
+      }
       currentIdx = idx;
       currentImages = images;
       lightboxImg.src = "";
       lightboxImg.src = images[idx];
-      lightboxInfo.textContent = `${idx + 1} / ${images.length}`;
+      lightboxInfo.textContent = currentI18n.format("photoCount", { shown: idx + 1, total: images.length });
 
       // In native fullscreen only the fullscreen element and its descendants
       // are rendered — move the lightbox inside it so it stays visible.
@@ -877,7 +863,7 @@
       if (idx < 0 || idx >= currentImages.length) return;
       currentIdx = idx;
       lightboxImg.src = currentImages[idx];
-      lightboxInfo.textContent = `${idx + 1} / ${currentImages.length}`;
+      lightboxInfo.textContent = currentI18n.format("photoCount", { shown: idx + 1, total: currentImages.length });
     }
 
     closeBtn.addEventListener("click", hideLightbox);
@@ -957,7 +943,7 @@
             gallery.querySelectorAll(".osm-popup-photo"),
           ).map((el) => el.getAttribute("data-fullsrc"));
 
-          showLightbox(images.indexOf(src), images);
+          showLightbox(images.indexOf(src), images, img);
         }
       },
       true,
@@ -971,7 +957,8 @@
     function attachTables() {
       if (!window.Tabular) return;
       document.querySelectorAll(".osm-place-list").forEach((table) => {
-        window.Tabular.initTable(table, { formatCount: i18n.placeCount });
+        const i18n = contextFor(table);
+        if (i18n.placeCount) window.Tabular.initTable(table, { formatCount: i18n.formatCount });
       });
     }
     attachTables();
@@ -1010,7 +997,7 @@
 
       const slug = row.dataset.osmPlaceSlug;
       const images = slug ? getImagesBySlug()[slug] : null;
-      if (images && images.length) showLightbox(0, images);
+      if (images && images.length) showLightbox(0, images, table);
     });
   }
 

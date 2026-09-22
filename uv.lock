@@ -34,6 +34,15 @@ wheels = [
 ]
 
 [[package]]
+name = "babel"
+version = "2.18.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/b2/51899539b6ceeeb420d40ed3cd4b7a40519404f9baf3d4ac99dc413a834b/babel-2.18.0.tar.gz", hash = "sha256:b80b99a14bd085fcacfa15c9165f651fbb3406e66cc603abf11c5750937c992d", size = 9959554, upload-time = "2026-02-01T12:30:56.078Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/77/f5/21d2de20e8b8b0408f0681956ca2c69f1320a3848ac50e6e7f39c6159675/babel-2.18.0-py3-none-any.whl", hash = "sha256:e2b422b277c2b9a9630c1d7903c2a00d0830c409c59ac8cae9081c92f1aeba35", size = 10196845, upload-time = "2026-02-01T12:30:53.445Z" },
+]
+
+[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -357,6 +366,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/45/1a4ed80516f02155c51f51e8cedb3c1902296743db0bbc66608a0db2814f/jsonschema_specifications-2025.9.1-py3-none-any.whl", hash = "sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe", size = 18437, upload-time = "2025-09-08T01:34:57.871Z" },
+]
+
+[[package]]
+name = "langcodes"
+version = "3.5.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a9/75/f9edc5d72945019312f359e69ded9f82392a81d49c5051ed3209b100c0d2/langcodes-3.5.1.tar.gz", hash = "sha256:40bff315e01b01d11c2ae3928dd4f5cbd74dd38f9bd912c12b9a3606c143f731", size = 191084, upload-time = "2025-12-02T16:22:01.627Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/dd/c1/d10b371bcba7abce05e2b33910e39c33cfa496a53f13640b7b8e10bb4d2b/langcodes-3.5.1-py3-none-any.whl", hash = "sha256:b6a9c25c603804e2d169165091d0cdb23934610524a21d226e4f463e8e958a72", size = 183050, upload-time = "2025-12-02T16:21:59.954Z" },
 ]
 
 [[package]]
@@ -698,7 +716,7 @@ test = [
 requires-dist = [
     { name = "jsonschema", marker = "extra == 'validate'", specifier = ">=4" },
     { name = "pelican", specifier = ">=4.5" },
-    { name = "pelican-tabular", specifier = ">=0.7.0" },
+    { name = "pelican-tabular", specifier = ">=0.9.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 provides-extras = ["validate"]
@@ -740,15 +758,17 @@ test = [
 
 [[package]]
 name = "pelican-tabular"
-version = "0.7.0"
+version = "0.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "babel" },
+    { name = "langcodes" },
     { name = "pelican" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/59/95cca7ed53a0732c2be9965e0b11a3d2521e0484ff2eed5af4a8d01d060a/pelican_tabular-0.7.0.tar.gz", hash = "sha256:d6e6d7e5636aac6c80e75213efbb55af0b477eed7b51dda67064b6d73c861826", size = 58932, upload-time = "2026-09-19T00:57:31.877Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/57/9d/a4f97cece9658dba1799d41c8caa532923abd5a48284357a58404ea05989/pelican_tabular-0.9.0.tar.gz", hash = "sha256:026098c6648d754b5d6408c95131f22dd28e51927707ac249c6317affe90d675", size = 69614, upload-time = "2026-09-22T04:03:50.464Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/87/8d725c47ef5eda4b4c6233ae3bbaf2c3b733d1f082aafbe5c1ecae4a9ab1/pelican_tabular-0.7.0-py3-none-any.whl", hash = "sha256:cba3aad73d8cd29accbed49ce37e79656df3069f7dc3309791d32e55de2e376e", size = 52966, upload-time = "2026-09-19T00:57:30.634Z" },
+    { url = "https://files.pythonhosted.org/packages/06/78/ae1c7ed7ac994e07c243956cb176a6eda3ad3b5f60f160a1dbfdcd30cc09/pelican_tabular-0.9.0-py3-none-any.whl", hash = "sha256:a0ce2014bb7f3870a5a3011ea6d2f59d8160758fea9f8b378241c2c47d7bf465", size = 62629, upload-time = "2026-09-22T04:03:48.848Z" },
 ]
 
 [[package]]
