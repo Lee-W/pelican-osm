@@ -134,7 +134,6 @@ def build_fixtures(output: Path) -> None:
                 group_count_is_text=True,
                 lang="zh-Hant",
                 column_order=["category", "name", "notes", "tags", "images"],
-                section_groups=True,
             )
         )
         (output / f"{name}.html").write_text(
@@ -225,7 +224,6 @@ def build_fixtures(output: Path) -> None:
         group_count_template=CATALOG.resolve("zh-Hant")["placeCount"],
         group_count_is_text=True,
         lang="zh-Hant",
-        section_groups=True,
         column_order=["hall", "format", "rows", "notes", "tags"],
     )
     template = (output / "explorer.html").read_text()

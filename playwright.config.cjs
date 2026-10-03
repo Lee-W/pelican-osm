@@ -8,7 +8,7 @@ module.exports = defineConfig({
   workers: 2,
   use: { baseURL, browserName: "chromium" },
   webServer: {
-    command: `uv run python scripts/serve_browser_fixtures.py --port ${port}`,
+    command: `uv run --no-sync python scripts/serve_browser_fixtures.py --port ${port}`,
     url: `${baseURL}/explorer.html`,
     reuseExistingServer: !process.env.CI,
   },
