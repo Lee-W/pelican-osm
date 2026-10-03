@@ -647,6 +647,167 @@ class TestRenderPlaceListHtmlItems:
 
 
 # ---------------------------------------------------------------------------
+# _render_place_list_html: OSM_LIST_COLUMN_ORDER
+# ---------------------------------------------------------------------------
+
+
+def _header_labels(html: str) -> list[str]:
+    thead = re.search(r"<thead><tr>(.*?)</tr></thead>", html, re.S)
+    assert thead
+    return re.findall(r"<th[^>]*>(.*?)</th>", thead.group(1), re.S)
+
+
+def _data_rows(html: str) -> list[list[str]]:
+    """Return each data row as a list of cell kinds: 'img', 'empty' or text."""
+    rows = []
+    for row in re.findall(r'<tr id="osm-place-.*?</tr>', html, re.S):
+        kinds = []
+        for attrs, inner in re.findall(r"<td([^>]*)>(.*?)</td>", row, re.S):
+            if "osm-list-image-icon" in attrs:
+                kinds.append("img")
+            elif not inner:
+                kinds.append("empty")
+            else:
+                kinds.append(re.sub(r"<.*", "", inner))
+        rows.append(kinds)
+    return rows
+
+
+_ORDER_PLACES = [
+    {
+        "name": "A",
+        "lat": 1.0,
+        "lon": 2.0,
+        "country": "TW",
+        "city": "X",
+        "urls": ["https://example.com"],
+        "images": ["https://example.com/a.jpg"],
+    },
+    {
+        "name": "B",
+        "lat": 1.0,
+        "lon": 2.0,
+        "country": "TW",
+        "city": "Y",
+        "urls": ["https://example.com/b"],
+    },
+]
+_FIELDS = ["country", "city"]
+
+
+def _render_order(order, places=None, fields=None, **kwargs):
+    return _render_place_list_html(
+        _ORDER_PLACES if places is None else places,
+        _FIELDS if fields is None else fields,
+        {},
+        column_order=order,
+        **kwargs,
+    )
+
+
+class TestRenderPlaceListColumnOrder:
+    def test_default_order(self):
+        html = _render_order(None)
+        assert _header_labels(html) == ["Name", "Country", "City", "Links", "🖼"]
+        assert _data_rows(html)[0][0] == "A"
+        assert _data_rows(html)[0][-1] == "img"
+
+    def test_empty_list_equals_unset(self):
+        assert _render_order([]) == _render_order(None)
+
+    def test_name_then_images(self):
+        html = _render_order(["name", "images"])
+        assert _header_labels(html) == ["Name", "🖼", "Country", "City", "Links"]
+        rows = _data_rows(html)
+        # Image-bearing and image-less rows stay aligned with the header.
+        assert rows[0][:3] == ["A", "img", "TW"]
+        assert rows[1][:3] == ["B", "empty", "TW"]
+
+    def test_urls_first(self):
+        html = _render_order(["urls"])
+        assert _header_labels(html) == ["Links", "Name", "Country", "City", "🖼"]
+        assert all(len(r) == 5 for r in _data_rows(html))
+
+    def test_data_field_ids_can_be_ordered(self):
+        html = _render_order(["city", "name"])
+        assert _header_labels(html) == ["City", "Name", "Country", "Links", "🖼"]
+        assert _data_rows(html)[0][:2] == ["X", "A"]
+
+    def test_unknown_keys_skipped(self):
+        html = _render_order(["nope", "images", "tags"])
+        assert _header_labels(html) == ["🖼", "Name", "Country", "City", "Links"]
+
+    def test_name_hoisted_to_summary_is_skipped(self):
+        html = _render_order(
+            ["name", "images"], group_by=["name"], group_summary_at=["name"]
+        )
+        assert _header_labels(html) == ["🖼", "Country", "City", "Links"]
+
+    def test_images_skipped_when_table_has_no_images(self):
+        places = [{k: v for k, v in p.items() if k != "images"} for p in _ORDER_PLACES]
+        html = _render_order(["images", "city"], places=places)
+        assert _header_labels(html) == ["City", "Name", "Country", "Links"]
+
+    def test_unlisted_columns_keep_default_order_after_listed(self):
+        html = _render_order(["urls", "country"])
+        assert _header_labels(html) == ["Links", "Country", "Name", "City", "🖼"]
+
+    def test_group_header_colspan_matches_columns(self):
+        html = _render_order(
+            ["images", "name"], group_by=["country"], group_summary_at=["country"]
+        )
+        spans = set(re.findall(r'colspan="(\d+)"', html))
+        assert spans == {str(len(_header_labels(html)))}
+        assert spans == set(
+            re.findall(
+                r'colspan="(\d+)"',
+                _render_order(None, group_by=["country"], group_summary_at=["country"]),
+            )
+        )
+
+    def test_images_sidecar_unchanged(self):
+        pat = r'<script type="application/json" class="osm-list-images">.*?</script>'
+        a = re.search(pat, _render_order(None))
+        b = re.search(pat, _render_order(["images"]))
+        assert a
+        assert b
+        assert a.group(0) == b.group(0)
+
+    @pytest.mark.parametrize(
+        "bad", ["name", ("name",), {"name": 1}, ["name", 1], ["name", "name"], 5]
+    )
+    def test_invalid_values_raise(self, bad):
+        with pytest.raises(ValueError, match="OSM_LIST_COLUMN_ORDER"):
+            _render_order(bad)
+
+    def test_setting_reaches_renderer(self, tmp_path):
+        root = tmp_path / "places"
+        root.mkdir()
+        (root / "a.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "locations": [
+                        {
+                            "name": "A",
+                            "lat": 1.0,
+                            "lon": 2.0,
+                            "images": ["https://example.com/a.jpg"],
+                        }
+                    ]
+                }
+            )
+        )
+        resolver = PlaceResolver(root)
+        content = "{% place_list a.yaml %}"
+        html = _process_content(
+            content, resolver, {"OSM_LIST_COLUMN_ORDER": ["images", "name"]}
+        )
+        assert _header_labels(html) == ["🖼", "Name"]
+        with pytest.raises(ValueError, match="OSM_LIST_COLUMN_ORDER"):
+            _process_content(content, resolver, {"OSM_LIST_COLUMN_ORDER": "images"})
+
+
+# ---------------------------------------------------------------------------
 # _render_place_list_html: 🗺️ link → OSM entity page via osm_type/osm_id
 # ---------------------------------------------------------------------------
 
