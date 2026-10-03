@@ -1071,37 +1071,6 @@
   }
 
   // Table behavior is provided by pelican-tabular; OSM owns image lightboxes.
-  function setupGroupControls(root, table, i18n) {
-    const headers = [...table.querySelectorAll(".osm-group-header")];
-    if (!headers.length) return null;
-    const controls = document.createElement("div");
-    controls.className = "osm-group-controls";
-    const expand = document.createElement("button");
-    const collapse = document.createElement("button");
-    function setExpanded(expanded) {
-      headers.forEach((header) => {
-        if ((header.getAttribute("aria-expanded") === "true") !== expanded) header.click();
-      });
-      sync();
-    }
-    for (const [button, text, expanded] of [
-      [expand, i18n.expandAll, true], [collapse, i18n.collapseAll, false],
-    ]) {
-      button.type = "button";
-      button.textContent = text;
-      // Route through the shared controller's existing toggle handlers.
-      button.addEventListener("click", () => setExpanded(expanded));
-      controls.append(button);
-    }
-    root.querySelector(".osm-explorer-controls").after(controls);
-    function sync() {
-      expand.disabled = headers.every((header) => header.getAttribute("aria-expanded") === "true");
-      collapse.disabled = headers.every((header) => header.getAttribute("aria-expanded") === "false");
-    }
-    sync();
-    return { expandAll: () => setExpanded(true), sync };
-  }
-
   function initSortableTables(showLightbox) {
     function attachTables() {
       if (!window.Tabular) return;
@@ -1114,12 +1083,9 @@
         }
         const controller = window.Tabular.initTable(table, { formatCount: i18n.formatCount });
         if (!controller || root.querySelector(".osm-explorer-controls")) return;
-        let groupTools;
         const tools = searchControls(root, i18n,
           (query) => {
             controller.getState().q = query;
-            // Search should reveal matches even after sections were collapsed.
-            if (query.trim()) groupTools?.expandAll();
             controller.update();
           },
           () => {
@@ -1129,7 +1095,6 @@
             root.querySelector(".osm-tag-filter-chip")?.remove();
             controller.update();
           });
-        groupTools = setupGroupControls(root, table, i18n);
         const count = root.querySelector(".osm-place-list-count");
         const empty = document.createElement("p");
         empty.className = "osm-list-no-results";
@@ -1138,7 +1103,6 @@
         root.append(empty);
         function sync() {
           const state = controller.getState();
-          groupTools?.sync();
           tools.clear.disabled = !state.q && !state.filters.tags?.length;
           empty.hidden = [...table.querySelectorAll(".osm-place-row, .osm-group-header")].some((row) => !row.hidden);
         }

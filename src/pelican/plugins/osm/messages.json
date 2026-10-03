@@ -42,9 +42,7 @@
     "search": "Search places…",
     "filters": "Filters",
     "resultCount": "Showing {shown} / {total} places",
-    "noResults": "No matching places. Try another search or clear the filters.",
-    "expandAll": "Expand all",
-    "collapseAll": "Collapse all"
+    "noResults": "No matching places. Try another search or clear the filters."
   },
   "zh-Hant": {
     "placeCount": "{n} 個地點",
@@ -83,9 +81,7 @@
     "search": "搜尋地點…",
     "filters": "篩選",
     "resultCount": "顯示 {shown} / {total} 個地點",
-    "noResults": "沒有符合條件的地點，試試其他關鍵字或清除篩選。",
-    "expandAll": "全部展開",
-    "collapseAll": "全部收合"
+    "noResults": "沒有符合條件的地點，試試其他關鍵字或清除篩選。"
   },
   "ja": {
     "placeCount": "{n} 件",
@@ -124,8 +120,6 @@
     "search": "場所を検索…",
     "filters": "絞り込み",
     "resultCount": "{total} 件中 {shown} 件を表示",
-    "noResults": "一致する場所がありません。検索語を変更するか、絞り込みをクリアしてください。",
-    "expandAll": "すべて展開",
-    "collapseAll": "すべて折りたたむ"
+    "noResults": "一致する場所がありません。検索語を変更するか、絞り込みをクリアしてください。"
   }
 }

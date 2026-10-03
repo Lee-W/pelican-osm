@@ -22,10 +22,12 @@ from pelican.plugins.tabular.core import (  # noqa: F401 - compatibility for con
 )
 from pelican.plugins.tabular.core import (
     collapse_rows,
-    group_key_value,
 )
 from pelican.plugins.tabular.core import extract_year as _extract_year  # noqa: F401
 from pelican.plugins.tabular.core import extract_years as _extract_years  # noqa: F401
+from pelican.plugins.tabular.i18n import (
+    CATALOG as TABLE_CATALOG,
+)
 from pelican.plugins.tabular.i18n import (
     Catalog,
     Message,
@@ -1241,7 +1243,6 @@ def _render_place_list_html(
     translations: dict[str, Any] | None = None,
     group_count_is_text: bool = False,
     column_order: list[str] | None = None,
-    section_groups: bool = False,
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -1266,7 +1267,9 @@ def _render_place_list_html(
         config dict). Recognized hints: ``x-osm-list-join``, ``x-osm-list-sort``.
     """
     field_schema = field_schema or {}
-    words = CATALOG.resolve(lang or "en", messages, path="OSM_MESSAGES")
+    words = TABLE_CATALOG.resolve(lang or "en") | CATALOG.resolve(
+        lang or "en", messages, path="OSM_MESSAGES"
+    )
     field_labels = {
         k: localized_text(
             v, lang or "en", fallback=k, path=f"OSM_LIST_FIELD_LABELS.{k}"
@@ -1611,24 +1614,6 @@ def _render_place_list_html(
                 + f' data-field="{html.escape(field, quote=True)}">'
                 + content
             )
-        if group_summary_at and cells:
-            # The shared controller searches row text. Include hoisted values
-            # so a city/theater search still finds the rows below its heading.
-            context = " ".join(
-                str(group_key_value(row, field)) for field in group_summary_at
-            )
-            opening, _, content = cells[0].partition(">")
-            if "data-sort-value=" not in opening:
-                sort_text = html.unescape(re.sub(r"<[^>]*>", "", content)).strip()
-                opening += f' data-sort-value="{html.escape(sort_text, quote=True)}"'
-            cells[0] = (
-                opening
-                + ">"
-                + content.removesuffix("</td>")
-                + '<span class="osm-group-search-context" hidden> '
-                + html.escape(context)
-                + " </span></td>"
-            )
         return f"<tr{_row_attrs(row)}>" + "".join(cells) + "</tr>"
 
     body = render_table_body(
@@ -1663,15 +1648,8 @@ def _render_place_list_html(
         if lang
         else ""
     )
-    # Direct HTML consumers keep the original group palette. Shortcodes opt
-    # into section headings without changing the shared table renderer.
-    group_class = " osm-section-groups" if section_groups and group_summary_at else ""
-    group_style = (
-        f' style="--osm-group-level:{len(group_summary_at) - 1}"' if group_class else ""
-    )
     return (
-        f'<div class="osm-place-list-wrapper osm-explorer-list{group_class}"'
-        f"{attrs}{group_style}>\n"
+        f'<div class="osm-place-list-wrapper osm-explorer-list"{attrs}>\n'
         '<table class="osm-place-list">\n'
         "<thead><tr>" + "".join(headers) + "</tr></thead>\n"
         "<tbody>\n" + body + "\n</tbody>\n"
@@ -1888,7 +1866,6 @@ def _process_content(
             group_count_is_text="OSM_LIST_GROUP_COUNT_TEMPLATE" not in settings,
             siteurl=siteurl,
             column_order=settings.get("OSM_LIST_COLUMN_ORDER"),
-            section_groups=True,
         )
 
     result = cast(str, list_pattern.sub(replace_list, result))

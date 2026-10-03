@@ -185,6 +185,10 @@ On phones, place lists display one place per block with column labels beside the
 
 When `group_summary_at` lists multiple fields, each level renders as a nested section heading. The top level uses a solid accent band; deeper levels use progressively lighter fills and indentation. A vertical guide connects each leaf heading to its data rows, which share the same indentation. A subtotal place count appears beside each title (configurable via `OSM_LIST_GROUP_COUNT_TEMPLATE`). The layout adapts to narrow screens and light/dark themes.
 
+Tabular owns these group styles, hierarchy metadata, localized expand/collapse
+controls and group-title search. OSM adds place counts, map links and photos
+through the shared renderer and controller.
+
 Headers are interactive:
 
 - **Click** a header (or focus + Enter / Space) to collapse its subtree; click again to expand.
@@ -666,6 +670,12 @@ are excluded from the OSM bundle.
 Install development dependencies with `uv sync --locked`. The lockfile uses
 tabular 0.9.0 from PyPI, which provides the shared i18n API; a sibling source
 checkout is not required.
+
+The enhanced group hierarchy is developed in Tabular's `group-hierarchy`
+branch. Its styles, bulk controls and group-title search are tested there;
+OSM's browser tests cover its map-link adapter. Release Tabular first, then
+update OSM's registry lock to adopt the enhanced hierarchy. The current lock
+continues to use the released group presentation.
 
 CI checks out the browser fixtures at the locked tabular version's tag and
 runs them with OSM's environment, so rendering and assets use the installed
