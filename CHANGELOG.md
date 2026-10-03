@@ -1,3 +1,9 @@
+## 0.18.0 (2026-10-03)
+
+### Feat
+
+- add OSM_LIST_COLUMN_ORDER to reorder place list columns
+
 ## 0.17.0 (2026-09-22)
 
 ### Feat
