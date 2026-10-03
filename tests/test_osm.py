@@ -1519,6 +1519,34 @@ class TestRenderPlaceListHtml:
         assert 'id="osm-group--jp"' in html
         assert 'id="osm-group--jp--tokyo"' in html
 
+    def test_group_search_context_is_escaped_and_preserves_first_column_sort(self):
+        rendered = _render_place_list_html(
+            [{"name": "Cinema", "city": '<script>"City"</script>', "hall": "2 & 3"}],
+            ["hall"],
+            {},
+            group_by=["city", "name"],
+            group_summary_at=["city", "name"],
+        )
+        cell = re.search(r'<td[^>]*data-field="hall"[^>]*>.*?</td>', rendered)
+        assert cell is not None
+        assert 'data-sort-value="2 &amp; 3"' in cell.group()
+        assert 'class="osm-group-search-context" hidden' in cell.group()
+        assert "&lt;script&gt;&quot;City&quot;&lt;/script&gt; Cinema" in cell.group()
+
+    def test_group_search_context_preserves_explicit_list_sort_key(self):
+        rendered = _render_place_list_html(
+            [{"name": "Cinema", "visits": ["2025", "2024"]}],
+            ["visits"],
+            {},
+            group_by=["name"],
+            group_summary_at=["name"],
+            field_schema={"visits": {"x-osm-list-sort": "min"}},
+        )
+        cell = re.search(r'<td[^>]*data-field="visits"[^>]*>.*?</td>', rendered)
+        assert cell is not None
+        assert 'data-sort-value="2024"' in cell.group()
+        assert "2025, 2024" in cell.group()
+
     def test_list_cell_joins_with_default_separator(self):
         # A multi-visit place: list value gets joined for display.
         places = [
@@ -2338,6 +2366,7 @@ class TestProcessContent:
         content = '{% place_list japan group_by="anime" group_summary_at="anime" %}'
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "osm-group-header" in result
+        assert "osm-section-groups" in result
         # Both anime titles surface as group headers
         assert "玉子市場" in result
         assert "MyGO" in result

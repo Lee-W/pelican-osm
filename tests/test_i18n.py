@@ -52,7 +52,7 @@ def test_map_list_share_explicit_language_and_escaped_schema_labels(tmp_path):
     assert rendered.count('lang="ja-JP"') == 2
     assert "/places/i18n/ja-JP/place.geojson" in rendered
     assert "日本語の名前" in rendered and "名前 &lt;&amp;&gt;" in rendered
-    assert 'lang="zh-TW">來源備註' in rendered
+    assert re.search(r'<td[^>]*lang="zh-TW"[^>]*>來源備註</td>', rendered)
     assert 'id="osm-place-來源名稱"' in rendered
     assert component_payload(rendered)["words"]["viewInTable"] == "表で表示"
     assert "translations" not in rendered
@@ -149,6 +149,31 @@ def test_caption_and_message_overrides_are_escaped():
     )
     assert "&lt;&amp;&gt;, B, C + 1 &lt;&amp;&gt;" in rendered
     assert component_payload(rendered)["words"]["more"] == " + {n} <&>"
+
+
+def test_responsive_labels_follow_column_order_schema_and_locale():
+    rendered = osm._render_place_list_html(
+        [{"name": "N", "notes": "Memo", "images": ["photo.jpg"]}],
+        ["notes"],
+        {},
+        lang="ja",
+        column_order=["notes", "images", "name"],
+        field_schema={
+            "notes": {
+                "title": "Source",
+                "x-osm-list-i18n": {"title": {"ja": '備考 <&> "quote"'}},
+            }
+        },
+    )
+    cells = re.findall(r"<td([^>]*)>(.*?)</td>", rendered, re.S)
+    assert [re.search(r'data-field="([^"]+)"', attrs)[1] for attrs, _ in cells] == [
+        "notes",
+        "images",
+        "name",
+    ]
+    assert 'data-label="備考 &lt;&amp;&gt; &quot;quote&quot;"' in cells[0][0]
+    assert 'data-label="場所の写真"' in cells[1][0]
+    assert '<button type="button" class="osm-list-photo-button"' in cells[1][1]
 
 
 def test_invalid_message_and_structural_translation_are_rejected(tmp_path):

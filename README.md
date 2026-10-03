@@ -6,6 +6,8 @@
 
 - `{% place %}` shortcode renders an independent interactive map per shortcode
 - `{% place_list %}` shortcode renders a sortable table of places with tag filtering, row count, optional grouping, and multi-level collapsible summary headers
+- Search maps and place lists by name or displayed fields; combine map searches with tag and layer filters, see result counts, and clear all filters in one click
+- Collapsible map filters (closed by default on phones), readable mobile place lists with labeled fields, and keyboard-accessible photo controls
 - Multi-value fields (e.g. multiple visit dates) render as joined cells with sort behaviour configurable via JSON Schema hints
 - YAML files converted to GeoJSON at build time — JS fetches them at runtime
 - Flexible spec syntax: single file, single place via `#id`, entire folder, or comma-separated mix
@@ -163,6 +165,12 @@ Each `{% place %}` shortcode renders its own independent map.
 
 ## Grouping and summary headers (`place_list`)
 
+Maps and place lists each get a search bar when JavaScript is available. Search is case-insensitive and normalizes Unicode (including fullwidth characters). Maps search names, original names for translated places, tags and place fields such as city or notes. Lists search the text rendered in their rows. Each component keeps its own search and filters.
+
+On maps, search, tag and layer filters combine with AND logic. The result count updates as you type, and the map fits the matching markers. **Clear filter** resets search and both filters; **Reset view** only restores the original map bounds. Filter options stay in place, with unavailable alternatives disabled. On screens up to 680px wide, map filters start collapsed; the filter button shows the number of selected tag/layer filters even while collapsed.
+
+On phones, place lists display one place per block with column labels beside the values. The name stays first even when `OSM_LIST_COLUMN_ORDER` moves it on desktop. Column headings remain available for sorting. Group collapse, tag filtering and photo viewing still work. Without JavaScript, lists retain their content and labels.
+
 `{% place_list %}` accepts kwargs to bucket rows under shared field values and to surface those values as section headers:
 
 ```text
@@ -175,12 +183,15 @@ Each `{% place %}` shortcode renders its own independent map.
 | `aggregate` | `field:op` pairs, comma-separated. Setting this opts into SQL-style collapse: rows sharing a `group_by` tuple merge into one, with the listed fields aggregated (e.g. `year` collects unique years, sorted ascending and comma-joined), other fields taking first-non-empty, and `tags` unioned. |
 | `group_summary_at` | A prefix of `group_by`. Listed fields are removed from data-row columns and emitted as section headers above each group. |
 
-When `group_summary_at` lists multiple fields, each level renders as a nested heading: depth-0 most prominent, deeper levels smaller and indented, each with its own background colour. A subtotal place count appears under every level (configurable via `OSM_LIST_GROUP_COUNT_TEMPLATE`).
+When `group_summary_at` lists multiple fields, each level renders as a nested section heading. The top level uses a solid accent band; deeper levels use progressively lighter fills and indentation. A vertical guide connects each leaf heading to its data rows, which share the same indentation. A subtotal place count appears beside each title (configurable via `OSM_LIST_GROUP_COUNT_TEMPLATE`). The layout adapts to narrow screens and light/dark themes.
 
 Headers are interactive:
 
 - **Click** a header (or focus + Enter / Space) to collapse its subtree; click again to expand.
+- Use **Expand all / Collapse all** above the table to open or close every level.
 - Each header has a stable `id="osm-group--<slug>"` for deep linking — e.g. `page.html#osm-group--japan--tokyo`. Loading the page with that hash auto-expands all ancestor groups so the target row is visible.
+
+Search includes fields moved into group headings, so searching a country, city or theater name still finds its data rows. Entering a search opens collapsed sections to reveal matching rows.
 
 Sorting a column re-orders data rows *within* each leaf group; group-header rows stay pinned in their YAML/define order so the hierarchy is preserved.
 
@@ -578,15 +589,15 @@ Set `OSM_MAP_HEIGHT = "300px"` in `pelicanconf.py` to change map height globally
 | Property | Default | Controls |
 | --- | --- | --- |
 | `--osm-map-height` | `400px` | Map canvas height; set inline from `OSM_MAP_HEIGHT` |
-| `--osm-radius` | `8px` | Block border radius |
-| `--osm-shadow` | `0 2px 8px …` | Block drop shadow |
+| `--osm-radius` | `10px` | Block border radius |
+| `--osm-shadow` | `0 2px 10px …` | Block drop shadow |
 | `--osm-caption-bg` | `#f5f5f5` | Caption bar background |
 | `--osm-caption-color` | `#555` | Caption text colour |
 | `--osm-caption-font-size` | `0.9em` | Caption font size |
 | `--osm-caption-padding` | `0.4em 0.8em` | Caption padding |
 | `--osm-caption-border` | `1px solid #ddd` | Caption top border |
 | `--osm-popup-min-width` | `200px` | Popup minimum width |
-| `--osm-popup-font-size` | `1.3em` | Popup base font size |
+| `--osm-popup-font-size` | `16px` | Popup base font size |
 | `--osm-popup-line-height` | `1.6` | Popup line height |
 | `--osm-popup-name-size` | `1.15em` | Place name font size |
 | `--osm-popup-name-weight` | `700` | Place name font weight |
@@ -604,6 +615,13 @@ Set `OSM_MAP_HEIGHT = "300px"` in `pelicanconf.py` to change map height globally
 | `--osm-links-font-size` | `0.9em` | Links row font size |
 | `--osm-links-color` | `#666` | Links row text colour |
 | `--osm-links-anchor-color` | `#c0392b` | OSM / Google anchor colour |
+
+Explorer controls and responsive lists also expose `--osm-surface`, `--osm-subtle`,
+`--osm-text`, `--osm-muted`, `--osm-border` and `--osm-accent` on their component
+wrappers. Defaults follow the host's `--color-background-*`, `--color-content-*`
+and `--brand` variables, with the existing OSM palette as fallback.
+Use `--osm-control-size` (16px) and `--osm-text-size` (18px) to adjust control
+and place-name typography.
 
 ## i18n
 
@@ -654,3 +672,17 @@ runs them with OSM's environment, so rendering and assets use the installed
 release rather than the fixture checkout's Python source. The release workflow
 uses `uv sync --locked --no-sources --no-dev` to verify the registry dependency
 and lockfile before publishing.
+
+To verify OSM's map and responsive-list interfaces locally:
+
+```bash
+npm ci
+npx playwright install chromium
+npm run test:browser
+```
+
+These tests build fixtures with the installed table core and OSM's real renderer,
+Leaflet and marker clustering. Maps use local preview tiles so the tests work
+without remote map or CDN requests. For a local preview, run
+`uv run python scripts/serve_browser_fixtures.py` and open
+`http://127.0.0.1:8766/explorer.html`.
