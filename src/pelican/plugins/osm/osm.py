@@ -9,6 +9,7 @@ import logging
 import re
 import shlex
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import unquote, urlparse
@@ -1208,6 +1209,22 @@ def _build_popup_field_labels(
     return out
 
 
+def _validate_column_order(value: Any) -> list[str]:
+    """Validate ``OSM_LIST_COLUMN_ORDER``; ``None`` means unset (empty list)."""
+    if value is None:
+        return []
+    if (
+        not isinstance(value, list)
+        or not all(isinstance(v, str) for v in value)
+        or len(set(value)) != len(value)
+    ):
+        raise ValueError(
+            "OSM_LIST_COLUMN_ORDER: expected a list of unique column key strings, "
+            f"e.g. ['name', 'images'], got {value!r}"
+        )
+    return list(value)
+
+
 def _render_place_list_html(
     places: list[dict[str, Any]],
     fields: list[str],
@@ -1222,6 +1239,7 @@ def _render_place_list_html(
     messages: dict[str, Any] | None = None,
     translations: dict[str, Any] | None = None,
     group_count_is_text: bool = False,
+    column_order: list[str] | None = None,
 ) -> str:
     """Render an HTML table for a list of places.
 
@@ -1494,20 +1512,67 @@ def _render_place_list_html(
     # mirroring how other summary fields are removed from data_fields.
     name_is_summary = "name" in summary_set
 
-    # Header
-    headers = []
+    order = _validate_column_order(column_order)
+
+    # One ordered column list drives both the header and every data row, so
+    # the two can never drift apart. Each entry is (key, header_html, cell_fn).
+    columns: list[tuple[str, str, Callable[[dict[str, Any]], str]]] = []
+
+    def data_cell_renderer(field: str) -> Callable[[dict[str, Any]], str]:
+        return lambda row: render_data_cell(row, field)
+
     if not name_is_summary:
-        headers.append("<th>" + html.escape(col_header("name", "Name")) + "</th>")
-    if has_tags:
-        headers.append("<th>" + html.escape(col_header("tags", "Tags")) + "</th>")
-    headers += [f"<th>{html.escape(col_header(f))}</th>" for f in data_fields]
-    if has_url:
-        headers.append("<th>" + html.escape(col_header("urls", "Links")) + "</th>")
-    if has_images:
-        headers.append(
-            f'<th class="osm-list-image-col-header"'
-            f' aria-label="{html.escape(str(words["photo"]), quote=True)}">🖼</th>'
+        columns.append(
+            (
+                "name",
+                "<th>" + html.escape(col_header("name", "Name")) + "</th>",
+                render_name_cell,
+            )
         )
+    if has_tags:
+        columns.append(
+            (
+                "tags",
+                "<th>" + html.escape(col_header("tags", "Tags")) + "</th>",
+                lambda row: f"<td>{render_tags(row.get('tags', []))}</td>",
+            )
+        )
+    for f in data_fields:
+        columns.append(
+            (
+                f,
+                f"<th>{html.escape(col_header(f))}</th>",
+                data_cell_renderer(f),
+            )
+        )
+    if has_url:
+        columns.append(
+            (
+                "urls",
+                "<th>" + html.escape(col_header("urls", "Links")) + "</th>",
+                lambda row: f"<td>{render_urls(row.get('urls', []))}</td>",
+            )
+        )
+    if has_images:
+        columns.append(
+            (
+                "images",
+                f'<th class="osm-list-image-col-header"'
+                f' aria-label="{html.escape(str(words["photo"]), quote=True)}">'
+                "🖼</th>",
+                lambda row: (
+                    '<td class="osm-list-image-icon">📷</td>'
+                    if row.get("images")
+                    else "<td></td>"
+                ),
+            )
+        )
+    if order:
+        # Listed keys first (in list order); unknown / absent keys are skipped.
+        # Unlisted columns keep their default relative order afterwards.
+        rank = {key: i for i, key in enumerate(order)}
+        columns.sort(key=lambda c: rank.get(c[0], len(rank)))
+    headers = [c[1] for c in columns]
     col_count = len(headers)
 
     def render_value_cell(field: str, value: Any) -> str:
@@ -1526,23 +1591,12 @@ def _render_place_list_html(
             return "<td></td>"
         return f"<td>{html.escape(_format_scalar(value))}</td>"
 
+    def render_data_cell(row: dict[str, Any], field: str) -> str:
+        cell = render_value_cell(field, row.get(field, ""))
+        return cell.replace("<td", "<td" + value_lang(row, field), 1)
+
     def render_data_row(row: dict[str, Any]) -> str:
-        cells = []
-        if not name_is_summary:
-            cells.append(render_name_cell(row))
-        if has_tags:
-            cells.append(f"<td>{render_tags(row.get('tags', []))}</td>")
-        for f in data_fields:
-            cell = render_value_cell(f, row.get(f, ""))
-            cells.append(cell.replace("<td", "<td" + value_lang(row, f), 1))
-        if has_url:
-            cells.append(f"<td>{render_urls(row.get('urls', []))}</td>")
-        if has_images:
-            raw = row.get("images")
-            if raw:
-                cells.append('<td class="osm-list-image-icon">📷</td>')
-            else:
-                cells.append("<td></td>")
+        cells = [render_cell(row) for _, _, render_cell in columns]
         return f"<tr{_row_attrs(row)}>" + "".join(cells) + "</tr>"
 
     body = render_table_body(
@@ -1794,6 +1848,7 @@ def _process_content(
             translations=settings.get("OSM_TRANSLATIONS"),
             group_count_is_text="OSM_LIST_GROUP_COUNT_TEMPLATE" not in settings,
             siteurl=siteurl,
+            column_order=settings.get("OSM_LIST_COLUMN_ORDER"),
         )
 
     result = cast(str, list_pattern.sub(replace_list, result))
