@@ -175,3 +175,6 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 junit.xml
+node_modules/
+test-results/
+playwright-report/

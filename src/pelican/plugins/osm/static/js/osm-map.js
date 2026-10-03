@@ -23,7 +23,7 @@
   function contextFor(element) {
     const component = window.Tabular.componentI18n(element);
     const fallback = window.OSM_DEFAULT_I18N || { words: {} };
-    const words = Object.keys(component.words).length ? component.words : fallback.words;
+    const words = { ...fallback.words, ...component.words };
     const overrides = window.OSM_I18N || {};
     const locale = component.locale || fallback.locale || "en";
     const result = { ...words, ...overrides, locale,
@@ -188,7 +188,8 @@
           images
             .map(
               (img, idx) =>
-                `<img src="${esc(safeUrl(img))}" alt="${esc(i18n.photo)}" class="osm-popup-photo" data-fullsrc="${esc(safeUrl(img))}" data-photo-idx="${idx}">`,
+                `<button type="button" class="osm-popup-photo-button" aria-label="${esc(i18n.photo)} ${idx + 1}">` +
+                `<img src="${esc(safeUrl(img))}" alt="${esc(i18n.photo)}" class="osm-popup-photo" data-fullsrc="${esc(safeUrl(img))}" data-photo-idx="${idx}"></button>`,
             )
             .join("") +
           `</div>`
@@ -269,6 +270,12 @@
       marker._osmPlaceSlug = props.slug || null;
       marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
       marker._osmLayer = layerField ? (props[layerField] || null) : null;
+      marker._osmSearch = window.Tabular.normalizeSearch(
+        Object.entries(props)
+          .filter(([key]) => !key.startsWith("_") && !["images", "urls", "items", "translations"].includes(key))
+          .map(([, value]) => Array.isArray(value) ? value.join(" ") : String(value ?? ""))
+          .concat(props._osm_source_name || "").join(" "),
+      );
       const images = imagesMap[placeKey] || [];
       marker.bindPopup(buildPopupHtml(props, lat, lon, images, perMapLabels, i18n), {
         maxWidth: 280,
@@ -280,10 +287,19 @@
   // ── Fullscreen handler ────────────────────────────────────────
   function setupFullscreenButton(mapContainer, mapElement, i18n) {
     const fsBtn = document.createElement("button");
+    fsBtn.type = "button";
     fsBtn.className = "osm-fullscreen-btn";
     fsBtn.setAttribute("title", i18n.fullscreen);
     fsBtn.setAttribute("aria-label", i18n.fullscreen);
+    fsBtn.setAttribute("aria-pressed", "false");
     fsBtn.innerHTML = "⛶";
+
+    function syncFullscreen() {
+      const block = mapContainer.closest(".osm-map-block");
+      const active = document.fullscreenElement === block || block.classList.contains("osm-map-block--fullscreen");
+      fsBtn.classList.toggle("osm-fullscreen-btn--active", active);
+      fsBtn.setAttribute("aria-pressed", String(active));
+    }
 
     fsBtn.addEventListener("click", async (e) => {
       e.preventDefault();
@@ -321,12 +337,14 @@
         mapBlock.classList.remove("osm-map-block--fullscreen");
         fsBtn.classList.remove("osm-fullscreen-btn--active");
       }
+      syncFullscreen();
     });
 
-    mapContainer.parentElement.insertBefore(fsBtn, mapContainer.nextSibling);
+    mapContainer.append(fsBtn);
 
     // Listen for native fullscreen changes
     document.addEventListener("fullscreenchange", () => {
+      syncFullscreen();
       setTimeout(() => {
         if (window.L && window.L.Map) {
           document.querySelectorAll(".osm-map").forEach((el) => {
@@ -375,6 +393,7 @@
             }
           });
         }
+        syncFullscreen();
       }
     });
   }
@@ -382,6 +401,7 @@
   // ── Reset view button ──────────────────────────────────────────
   function setupResetButton(mapEl, map, initialView, i18n) {
     const btn = document.createElement("button");
+    btn.type = "button";
     btn.className = "osm-reset-btn";
     btn.setAttribute("title", i18n.resetView);
     btn.setAttribute("aria-label", i18n.resetView);
@@ -397,12 +417,18 @@
       }
     });
 
-    mapEl.parentElement.insertBefore(btn, mapEl.nextSibling);
+    mapEl.append(btn);
   }
 
   // ── Shared filter state + marker reconciler ──────────────────
   function makeFilterState(map, markers, clusterGroup, initialView) {
-    const state = { tag: null, layer: null };
+    const state = { tag: null, layer: null, query: "" };
+
+    function matches(marker, except) {
+      return (!state.tag || except === "tag" || marker._osmTags.includes(state.tag)) &&
+        (!state.layer || except === "layer" || marker._osmLayer === state.layer) &&
+        marker._osmSearch.includes(window.Tabular.normalizeSearch(state.query.trim()));
+    }
 
     function refitBounds(visible) {
       if (visible.length === 0) return;
@@ -414,24 +440,20 @@
     }
 
     function apply() {
-      const { tag, layer } = state;
-      const visible = [];
+      const { tag, layer, query } = state;
+      const visible = markers.filter((marker) => matches(marker));
+      map.closePopup();
       if (clusterGroup) {
         clusterGroup.clearLayers();
-        markers.forEach((m) => {
-          const ok = (!tag || m._osmTags.includes(tag)) &&
-                     (!layer || m._osmLayer === layer);
-          if (ok) { clusterGroup.addLayer(m); visible.push(m); }
-        });
+        clusterGroup.addLayers(visible);
       } else {
+        const included = new Set(visible);
         markers.forEach((m) => {
-          const ok = (!tag || m._osmTags.includes(tag)) &&
-                     (!layer || m._osmLayer === layer);
-          if (ok) { m.addTo(map); visible.push(m); }
+          if (included.has(m)) m.addTo(map);
           else m.remove();
         });
       }
-      if (!tag && !layer) {
+      if (!tag && !layer && !query.trim()) {
         if (initialView.bounds) map.fitBounds(initialView.bounds);
         else map.setView(initialView.center, initialView.zoom);
       } else {
@@ -449,11 +471,74 @@
       return visible;
     }
 
-    return { state, apply: applyAndNotify, markers, onApply };
+    return { state, apply: applyAndNotify, markers, onApply, matches };
+  }
+
+  function searchControls(root, i18n, onSearch, onClear) {
+    const controls = document.createElement("div");
+    controls.className = "osm-explorer-controls";
+    const label = document.createElement("label");
+    label.className = "osm-explorer-search";
+    const text = document.createElement("span");
+    text.className = "osm-sr-only";
+    text.textContent = i18n.search;
+    const input = document.createElement("input");
+    input.type = "search";
+    input.placeholder = i18n.search;
+    input.addEventListener("input", () => onSearch(input.value));
+    label.append(text, input);
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "osm-explorer-clear";
+    clear.textContent = i18n.clearFilter;
+    clear.addEventListener("click", () => { input.value = ""; onClear(); });
+    controls.append(label, clear);
+    root.prepend(controls);
+    return { controls, input, clear };
+  }
+
+  function setupMapExplorer(mapEl, filterCtx, i18n) {
+    const root = mapEl.closest(".osm-map-block");
+    const { state, markers, apply } = filterCtx;
+    const tools = searchControls(root, i18n,
+      (query) => { state.query = query; apply(); },
+      () => { state.query = ""; state.tag = null; state.layer = null; apply(); });
+    const panel = document.createElement("div");
+    panel.className = "osm-map-filters";
+    panel.id = `${mapEl.id}-filters`;
+    panel.hidden = window.matchMedia("(max-width: 680px)").matches;
+    root.insertBefore(panel, mapEl);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "osm-explorer-filter-toggle";
+    toggle.setAttribute("aria-controls", panel.id);
+    function syncToggle() {
+      toggle.setAttribute("aria-expanded", String(!panel.hidden));
+      const n = Number(Boolean(state.tag)) + Number(Boolean(state.layer));
+      toggle.textContent = i18n.filters + (n ? ` (${n})` : "");
+    }
+    toggle.addEventListener("click", () => { panel.hidden = !panel.hidden; syncToggle(); });
+    tools.controls.insertBefore(toggle, tools.clear);
+    const count = document.createElement("div");
+    count.className = "osm-explorer-count";
+    count.setAttribute("role", "status");
+    root.insertBefore(count, panel);
+    const empty = document.createElement("div");
+    empty.className = "osm-map-no-results";
+    empty.textContent = i18n.noResults;
+    empty.hidden = true;
+    mapEl.append(empty);
+    filterCtx.onApply((visible) => {
+      count.textContent = i18n.format("resultCount", { shown: visible.length, total: markers.length });
+      empty.hidden = visible.length !== 0;
+      tools.clear.disabled = !state.query && !state.tag && !state.layer;
+      syncToggle();
+    });
+    return { panel, toggle };
   }
 
   // ── Map tag filter ────────────────────────────────────────────
-  function setupMapTagFilter(mapEl, filterCtx) {
+  function setupMapTagFilter(panel, filterCtx, i18n) {
     const { state, apply } = filterCtx;
     const markers = filterCtx.markers;
 
@@ -463,24 +548,20 @@
     }
     if (allTags.size === 0) return;
 
-    const mapBlock = mapEl.closest(".osm-map-block");
-    if (!mapBlock) return;
-
-    const bar = document.createElement("div");
+    const bar = document.createElement("fieldset");
     bar.className = "osm-map-tag-bar";
+    const legend = document.createElement("legend");
+    legend.textContent = i18n.fieldLabels.tags;
+    bar.append(legend);
 
     function setTag(tag) {
       state.tag = tag;
-      bar.querySelectorAll(".osm-map-tag-chip").forEach((c) => {
-        const isActive = c.dataset.tag === tag;
-        c.classList.toggle("osm-map-tag-chip--active", isActive);
-        c.textContent = isActive ? tag + " ✕" : c.dataset.tag;
-      });
       apply();
     }
 
     for (const tag of allTags) {
       const chip = document.createElement("button");
+      chip.type = "button";
       chip.className = "osm-map-tag-chip";
       chip.dataset.tag = tag;
       chip.textContent = tag;
@@ -491,39 +572,46 @@
       bar.appendChild(chip);
     }
 
-    mapBlock.insertBefore(bar, mapEl.nextSibling);
+    panel.append(bar);
 
-    // When any filter changes, hide tag chips that have no visible markers
-    filterCtx.onApply((visible) => {
+    // Facets consider the other filters so switching tags stays possible.
+    filterCtx.onApply(() => {
       bar.querySelectorAll(".osm-map-tag-chip").forEach((chip) => {
         const tag = chip.dataset.tag;
-        const hasVisible = visible.some((m) => m._osmTags.includes(tag));
-        chip.style.display = hasVisible || state.tag === tag ? "" : "none";
+        const active = state.tag === tag;
+        chip.classList.toggle("osm-map-tag-chip--active", active);
+        chip.setAttribute("aria-pressed", String(active));
+        chip.disabled = !active && !markers.some((m) => filterCtx.matches(m, "tag") && m._osmTags.includes(tag));
       });
     });
   }
 
   // ── Layer filter (x-osm-map-layer field) ─────────────────────
-  function setupMapLayerFilter(mapEl, filterCtx, i18n, perMapLabels, layerField) {
+  function setupMapLayerFilter(panel, filterCtx, i18n, perMapLabels, layerField) {
     const { state, apply, markers } = filterCtx;
 
     const allLayers = [...new Set(markers.map((m) => m._osmLayer).filter(Boolean))].sort((a, b) => window.Tabular.compare(a, b, "asc", i18n.locale));
     if (allLayers.length <= 1) return;
 
-    const mapBlock = mapEl.closest(".osm-map-block");
-    if (!mapBlock) return;
-
-    const bar = document.createElement("div");
+    const bar = document.createElement("fieldset");
     bar.className = "osm-map-layer-bar";
+    const legend = document.createElement("legend");
+    const layerLabel = perMapLabels?.[layerField] ?? i18n.layer;
+    legend.textContent = layerLabel;
+    bar.append(legend);
 
     if (allLayers.length > 10) {
       // ── Select + explicit clear button ──────────────────────
       const labelEl = document.createElement("label");
       labelEl.className = "osm-map-layer-label";
-      labelEl.textContent = perMapLabels?.[layerField] ?? i18n.layer;
+      const labelText = document.createElement("span");
+      labelText.className = "osm-sr-only";
+      labelText.textContent = layerLabel;
+      labelEl.append(labelText);
 
       const select = document.createElement("select");
       select.className = "osm-map-layer-select";
+      select.setAttribute("aria-label", layerLabel);
 
       const defaultOpt = document.createElement("option");
       defaultOpt.value = "";
@@ -537,6 +625,7 @@
       }
 
       const clearBtn = document.createElement("button");
+      clearBtn.type = "button";
       clearBtn.className = "osm-map-layer-clear";
       clearBtn.textContent = "✕";
       clearBtn.title = i18n.clearFilter;
@@ -565,17 +654,16 @@
       bar.appendChild(clearBtn);
 
       filterCtx.onApply(() => {
-        // Disable options with no markers under TAG filter only —
-        // never disable based on layer filter so user can switch freely.
+        // Ignore the selected layer when calculating available alternatives.
         const tagFiltered = new Set(
           markers
-            .filter((m) => !state.tag || m._osmTags.includes(state.tag))
+            .filter((m) => filterCtx.matches(m, "layer"))
             .map((m) => m._osmLayer)
             .filter(Boolean),
         );
         select.querySelectorAll("option").forEach((opt) => {
           if (!opt.value) return;
-          opt.disabled = !tagFiltered.has(opt.value);
+          opt.disabled = opt.value !== state.layer && !tagFiltered.has(opt.value);
         });
         select.value = state.layer || "";
         syncClearBtn();
@@ -585,16 +673,12 @@
       // ── Chips (≤ 10 layers) ──────────────────────────────────
       function setLayer(layer) {
         state.layer = layer;
-        bar.querySelectorAll(".osm-map-layer-chip").forEach((c) => {
-          const isActive = c.dataset.layer === layer;
-          c.classList.toggle("osm-map-layer-chip--active", isActive);
-          c.textContent = isActive ? layer + " ✕" : c.dataset.layer;
-        });
         apply();
       }
 
       for (const layer of allLayers) {
         const chip = document.createElement("button");
+        chip.type = "button";
         chip.className = "osm-map-layer-chip";
         chip.dataset.layer = layer;
         chip.textContent = layer;
@@ -605,17 +689,19 @@
         bar.appendChild(chip);
       }
 
-      filterCtx.onApply((visible) => {
-        const visibleLayers = new Set(visible.map((m) => m._osmLayer).filter(Boolean));
+      filterCtx.onApply(() => {
+        const visibleLayers = new Set(markers.filter((m) => filterCtx.matches(m, "layer")).map((m) => m._osmLayer));
         bar.querySelectorAll(".osm-map-layer-chip").forEach((chip) => {
           const layer = chip.dataset.layer;
-          chip.style.display = visibleLayers.has(layer) || state.layer === layer ? "" : "none";
+          const active = state.layer === layer;
+          chip.classList.toggle("osm-map-layer-chip--active", active);
+          chip.setAttribute("aria-pressed", String(active));
+          chip.disabled = !active && !visibleLayers.has(layer);
         });
       });
     }
 
-    const tagBar = mapBlock.querySelector(".osm-map-tag-bar");
-    mapBlock.insertBefore(bar, tagBar || mapEl.nextSibling);
+    panel.prepend(bar);
   }
 
   // ── Map init ──────────────────────────────────────────────────
@@ -656,6 +742,9 @@
     const map = L.map(el.id, { zoomControl: false });
     L.control.zoom({ zoomInTitle: i18n.zoomIn, zoomOutTitle: i18n.zoomOut }).addTo(map);
     el._leaflet_map = map;
+    if ("ResizeObserver" in window) {
+      new ResizeObserver(() => map.invalidateSize()).observe(el);
+    }
     L.tileLayer(tileUrl, { attribution, maxZoom: 18 }).addTo(map);
 
     const markers = [];
@@ -735,10 +824,15 @@
     const filterCtx = makeFilterState(map, markers, clusterGroup, initialView);
 
     // Tag filtering on map
-    setupMapTagFilter(el, filterCtx);
+    const explorer = setupMapExplorer(el, filterCtx, i18n);
+    setupMapTagFilter(explorer.panel, filterCtx, i18n);
 
     // Layer filtering (x-osm-map-layer field)
-    setupMapLayerFilter(el, filterCtx, i18n, perMapLabels, layerField);
+    setupMapLayerFilter(explorer.panel, filterCtx, i18n, perMapLabels, layerField);
+    explorer.toggle.hidden = !explorer.panel.children.length;
+    explorer.panel.hidden ||= !explorer.panel.children.length;
+    filterCtx.apply();
+    map.invalidateSize();
 
     // Scroll popup to top on open so name/info is visible before photos
     map.on("popupopen", (e) => {
@@ -771,6 +865,12 @@
           (slugFromAnchor && m._osmPlaceSlug === slugFromAnchor),
       );
       if (!target) return;
+      // Restore visibility before opening a place reached through a deep link.
+      if (!filterCtx.matches(target)) {
+        Object.assign(filterCtx.state, { query: "", tag: null, layer: null });
+        el.closest(".osm-map-block").querySelector("input[type=search]").value = "";
+        filterCtx.apply();
+      }
       if (clusterGroup && clusterGroup.zoomToShowLayer) {
         clusterGroup.zoomToShowLayer(target, () => {
           target.openPopup();
@@ -788,16 +888,18 @@
     let currentIdx = 0;
     let currentImages = [];
     let currentI18n;
+    let previousFocus;
+    let previousOverflow;
 
     const lightboxHtml = `
-      <div id="osm-photo-lightbox" class="osm-lightbox" tabindex="-1">
+      <div id="osm-photo-lightbox" class="osm-lightbox" role="dialog" aria-modal="true" tabindex="-1">
         <div class="osm-lightbox-overlay"></div>
         <div class="osm-lightbox-container" tabindex="-1">
-          <button class="osm-lightbox-close">&times;</button>
-          <button class="osm-lightbox-prev">&lsaquo;</button>
+          <button type="button" class="osm-lightbox-close">&times;</button>
+          <button type="button" class="osm-lightbox-prev">&lsaquo;</button>
           <img class="osm-lightbox-image" src="" alt="">
-          <button class="osm-lightbox-next">&rsaquo;</button>
-          <div class="osm-lightbox-info"></div>
+          <button type="button" class="osm-lightbox-next">&rsaquo;</button>
+          <div class="osm-lightbox-info" role="status"></div>
         </div>
       </div>
     `;
@@ -814,7 +916,12 @@
     const container = lightbox.querySelector(".osm-lightbox-container");
 
     function showLightbox(idx, images, origin) {
+      if (!lightbox.classList.contains("osm-lightbox--active")) {
+        previousFocus = document.activeElement;
+        previousOverflow = document.body.style.overflow;
+      }
       currentI18n = contextFor(origin);
+      lightbox.setAttribute("aria-label", currentI18n.photo);
       lightbox.lang = currentI18n.locale;
       lightbox.dir = currentI18n.dir;
       lightboxImg.alt = currentI18n.photo;
@@ -823,6 +930,8 @@
       }
       currentIdx = idx;
       currentImages = images;
+      prevBtn.disabled = idx === 0;
+      nextBtn.disabled = idx === images.length - 1;
       lightboxImg.src = "";
       lightboxImg.src = images[idx];
       lightboxInfo.textContent = currentI18n.format("photoCount", { shown: idx + 1, total: images.length });
@@ -845,24 +954,28 @@
 
       lightbox.classList.add("osm-lightbox--active");
       document.body.style.overflow = "hidden";
-      lightbox.focus();
+      closeBtn.focus();
     }
 
     function hideLightbox() {
       lightbox.classList.remove("osm-lightbox--active");
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow || "";
       // Return lightbox to body and reset inline styles for next use.
       if (lightbox.parentElement !== document.body) {
         document.body.appendChild(lightbox);
       }
       lightbox.style.position = "";
       lightbox.style.zIndex = "";
+      previousFocus?.focus();
     }
 
     function goToImage(idx) {
       if (idx < 0 || idx >= currentImages.length) return;
       currentIdx = idx;
       lightboxImg.src = currentImages[idx];
+      prevBtn.disabled = idx === 0;
+      nextBtn.disabled = idx === currentImages.length - 1;
+      if (document.activeElement?.disabled) closeBtn.focus();
       lightboxInfo.textContent = currentI18n.format("photoCount", { shown: idx + 1, total: currentImages.length });
     }
 
@@ -875,20 +988,25 @@
       e.preventDefault();
       e.stopPropagation();
       goToImage(currentIdx - 1);
-      prevBtn.blur();
     });
 
     nextBtn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       goToImage(currentIdx + 1);
-      nextBtn.blur();
     });
 
     document.addEventListener(
       "keydown",
       (e) => {
         if (!lightbox.classList.contains("osm-lightbox--active")) return;
+        if (e.key === "Tab") {
+          const buttons = [closeBtn, prevBtn, nextBtn].filter((button) => !button.disabled);
+          const index = buttons.indexOf(document.activeElement);
+          const next = (index + (e.shiftKey ? -1 : 1) + buttons.length) % buttons.length;
+          e.preventDefault();
+          buttons[next].focus();
+        }
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
@@ -930,13 +1048,13 @@
     document.addEventListener(
       "click",
       (e) => {
-        if (e.target.classList.contains("osm-popup-photo")) {
+        const photoButton = e.target.closest(".osm-popup-photo-button");
+        const img = photoButton?.querySelector(".osm-popup-photo") || e.target.closest(".osm-popup-photo");
+        if (img) {
           e.preventDefault();
           e.stopPropagation();
 
-          const img = e.target;
           const src = img.getAttribute("data-fullsrc");
-          const idx = parseInt(img.getAttribute("data-photo-idx"), 10);
 
           const gallery = img.closest(".osm-popup-gallery");
           const images = Array.from(
@@ -953,12 +1071,82 @@
   }
 
   // Table behavior is provided by pelican-tabular; OSM owns image lightboxes.
+  function setupGroupControls(root, table, i18n) {
+    const headers = [...table.querySelectorAll(".osm-group-header")];
+    if (!headers.length) return null;
+    const controls = document.createElement("div");
+    controls.className = "osm-group-controls";
+    const expand = document.createElement("button");
+    const collapse = document.createElement("button");
+    function setExpanded(expanded) {
+      headers.forEach((header) => {
+        if ((header.getAttribute("aria-expanded") === "true") !== expanded) header.click();
+      });
+      sync();
+    }
+    for (const [button, text, expanded] of [
+      [expand, i18n.expandAll, true], [collapse, i18n.collapseAll, false],
+    ]) {
+      button.type = "button";
+      button.textContent = text;
+      // Route through the shared controller's existing toggle handlers.
+      button.addEventListener("click", () => setExpanded(expanded));
+      controls.append(button);
+    }
+    root.querySelector(".osm-explorer-controls").after(controls);
+    function sync() {
+      expand.disabled = headers.every((header) => header.getAttribute("aria-expanded") === "true");
+      collapse.disabled = headers.every((header) => header.getAttribute("aria-expanded") === "false");
+    }
+    sync();
+    return { expandAll: () => setExpanded(true), sync };
+  }
+
   function initSortableTables(showLightbox) {
     function attachTables() {
       if (!window.Tabular) return;
       document.querySelectorAll(".osm-place-list").forEach((table) => {
         const i18n = contextFor(table);
-        if (i18n.placeCount) window.Tabular.initTable(table, { formatCount: i18n.formatCount });
+        const root = table.closest(".osm-place-list-wrapper");
+        if (!root?.classList.contains("osm-explorer-list")) {
+          if (i18n.placeCount) window.Tabular.initTable(table, { formatCount: i18n.formatCount });
+          return;
+        }
+        const controller = window.Tabular.initTable(table, { formatCount: i18n.formatCount });
+        if (!controller || root.querySelector(".osm-explorer-controls")) return;
+        let groupTools;
+        const tools = searchControls(root, i18n,
+          (query) => {
+            controller.getState().q = query;
+            // Search should reveal matches even after sections were collapsed.
+            if (query.trim()) groupTools?.expandAll();
+            controller.update();
+          },
+          () => {
+            const state = controller.getState();
+            state.q = "";
+            state.filters.tags = [];
+            root.querySelector(".osm-tag-filter-chip")?.remove();
+            controller.update();
+          });
+        groupTools = setupGroupControls(root, table, i18n);
+        const count = root.querySelector(".osm-place-list-count");
+        const empty = document.createElement("p");
+        empty.className = "osm-list-no-results";
+        empty.textContent = i18n.noResults;
+        empty.hidden = true;
+        root.append(empty);
+        function sync() {
+          const state = controller.getState();
+          groupTools?.sync();
+          tools.clear.disabled = !state.q && !state.filters.tags?.length;
+          empty.hidden = [...table.querySelectorAll(".osm-place-row, .osm-group-header")].some((row) => !row.hidden);
+        }
+        if (count) {
+          count.setAttribute("role", "status");
+          new MutationObserver(sync).observe(count, { childList: true });
+        }
+        sync();
       });
     }
     attachTables();
@@ -989,7 +1177,7 @@
     }
 
     tbody.addEventListener("click", (e) => {
-      const iconCell = e.target.closest("td.osm-list-image-icon");
+      const iconCell = e.target.closest(".osm-list-photo-button, td.osm-list-image-icon");
       if (!iconCell) return;
       const row = iconCell.closest("tr.osm-has-images");
       if (!row) return;
@@ -1001,18 +1189,9 @@
     });
   }
 
-  function initCaptionToggle() {
-    document.querySelectorAll(".osm-map-caption").forEach((caption) => {
-      caption.addEventListener("click", () => {
-        caption.classList.toggle("osm-map-caption--expanded");
-      });
-    });
-  }
-
   function initAllMaps() {
     const showLightbox = setupPhotoLightbox();
     initSortableTables(showLightbox);
-    initCaptionToggle();
 
     const mapEls = document.querySelectorAll(".osm-map");
 
