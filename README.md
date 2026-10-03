@@ -655,7 +655,7 @@ MIT © Wei Lee
 
 ## Shared table core
 
-OSM depends on `pelican-tabular>=0.9.0` for component localization, table grouping, aggregation,
+OSM depends on `pelican-tabular>=0.10.0` for component localization, table grouping, aggregation,
 sorting, tag filtering, group collapse and table CSS. OSM retains place data,
 schema hints, map links and photo lightboxes. Both plugins may be enabled;
 shared assets are registered once, including when only OSM is enabled.
@@ -668,14 +668,12 @@ when a page also selects an optional tabular database view. Database controls
 are excluded from the OSM bundle.
 
 Install development dependencies with `uv sync --locked`. The lockfile uses
-tabular 0.9.0 from PyPI, which provides the shared i18n API; a sibling source
-checkout is not required.
+tabular 0.10.0 from PyPI, which provides the shared i18n API and enhanced group
+hierarchy; a sibling source checkout is not required.
 
-The enhanced group hierarchy is developed in Tabular's `group-hierarchy`
-branch. Its styles, bulk controls and group-title search are tested there;
-OSM's browser tests cover its map-link adapter. Release Tabular first, then
-update OSM's registry lock to adopt the enhanced hierarchy. The current lock
-continues to use the released group presentation.
+Tabular 0.10.0 provides the enhanced group hierarchy, localized bulk controls
+and group-title search. Tabular maintains their shared styles and tests;
+OSM's browser tests cover its map-link adapter.
 
 CI checks out the browser fixtures at the locked tabular version's tag and
 runs them with OSM's environment, so rendering and assets use the installed

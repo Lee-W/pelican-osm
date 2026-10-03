@@ -716,7 +716,7 @@ test = [
 requires-dist = [
     { name = "jsonschema", marker = "extra == 'validate'", specifier = ">=4" },
     { name = "pelican", specifier = ">=4.5" },
-    { name = "pelican-tabular", specifier = ">=0.9.0" },
+    { name = "pelican-tabular", specifier = ">=0.10.0" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
 provides-extras = ["validate"]
@@ -758,7 +758,7 @@ test = [
 
 [[package]]
 name = "pelican-tabular"
-version = "0.9.0"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "babel" },
@@ -766,9 +766,9 @@ dependencies = [
     { name = "pelican" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/57/9d/a4f97cece9658dba1799d41c8caa532923abd5a48284357a58404ea05989/pelican_tabular-0.9.0.tar.gz", hash = "sha256:026098c6648d754b5d6408c95131f22dd28e51927707ac249c6317affe90d675", size = 69614, upload-time = "2026-09-22T04:03:50.464Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/45/c5/10c68abb972f62aca421e47c2b50a987874e409b9713a02cf83320ec7848/pelican_tabular-0.10.0.tar.gz", hash = "sha256:7074edd585776d48820779df1441497e369217174039579e0d5acd8ab2170590", size = 72160, upload-time = "2026-10-03T15:50:47.28Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/06/78/ae1c7ed7ac994e07c243956cb176a6eda3ad3b5f60f160a1dbfdcd30cc09/pelican_tabular-0.9.0-py3-none-any.whl", hash = "sha256:a0ce2014bb7f3870a5a3011ea6d2f59d8160758fea9f8b378241c2c47d7bf465", size = 62629, upload-time = "2026-09-22T04:03:48.848Z" },
+    { url = "https://files.pythonhosted.org/packages/cb/99/ccd28b452bc2dfcfd0b74d1c0834d953039301de2e87d3115dae6983892d/pelican_tabular-0.10.0-py3-none-any.whl", hash = "sha256:29aa9030199caf45b7d6ba490893b9541462c5e413271a8c04f34db8cd1517dc", size = 65370, upload-time = "2026-10-03T15:50:45.9Z" },
 ]
 
 [[package]]
