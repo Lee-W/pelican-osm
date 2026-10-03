@@ -1,3 +1,13 @@
+## 0.19.0 (2026-10-03)
+
+### Feat
+
+- improve map exploration and grouped place lists
+
+### Refactor
+
+- share grouped place lists through Tabular
+
 ## 0.18.0 (2026-10-03)
 
 ### Feat
