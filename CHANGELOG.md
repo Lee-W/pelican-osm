@@ -1,3 +1,14 @@
+## 0.20.0 (2026-10-04)
+
+### Feat
+
+- make large map filters searchable
+
+### Fix
+
+- keep map filters usable and CI compatible
+- keep map filters compact by default
+
 ## 0.19.3 (2026-10-04)
 
 ### Fix
