@@ -21,6 +21,7 @@ for (const clustered of [true, false]) {
     const count = root.locator(".osm-explorer-count");
     const search = root.getByRole("searchbox", { name: "搜尋地點…" });
     await expect(count).toHaveText("顯示 4 / 4 個地點");
+    await root.getByRole("button", { name: "篩選", exact: true }).click();
     await root.getByRole("button", { name: "東京", exact: true }).click();
     await root.getByRole("button", { name: "散步", exact: true }).click();
     await expect(count).toHaveText("顯示 1 / 4 個地點");
@@ -79,6 +80,7 @@ for (const clustered of [true, false]) {
       await expect(list.locator(".osm-place-row:visible")).toHaveCount(rows);
     }
     await map.getByRole("searchbox").fill("IMAX");
+    await map.getByRole("button", { name: "篩選", exact: true }).click();
     await map.getByRole("button", { name: "臺北", exact: true }).click();
     await expect(count).toHaveText("顯示 1 / 4 個地點");
     await list.getByRole("searchbox").fill("missing");
@@ -118,6 +120,7 @@ test("map and list search all public values without a field allowlist", async ({
 test("large layer dropdown composes with search and clearing", async ({ page }) => {
   await visit(page, "/many-layers.html");
   const root = page.locator('.osm-map-block[lang="zh-Hant"]');
+  await root.getByRole("button", { name: "篩選", exact: true }).click();
   const select = root.getByRole("combobox", { name: "圖層" });
   await select.selectOption("City 3");
   await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 1 / 12 個地點");
@@ -130,15 +133,19 @@ test("large layer dropdown composes with search and clearing", async ({ page }) 
 });
 
 for (const width of [390, 1200]) {
-  test(`many tags wrap below the map with usable spacing at ${width}px`, async ({ page }, testInfo) => {
+  test(`map filters start collapsed and keep many tags compact at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await visit(page, "/many-tags.html");
     const root = page.locator('.osm-map-block[lang="zh-Hant"]');
     const panel = root.locator(".osm-map-filters");
-    if (width < 680) await root.getByRole("button", { name: "篩選", exact: true }).click();
+    const toggle = root.locator(".osm-explorer-filter-toggle");
+    await expect(panel).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
     const mapBox = await root.locator(".osm-map").boundingBox();
     const panelBox = await panel.boundingBox();
     expect(panelBox.y).toBeGreaterThanOrEqual(mapBox.y + mapBox.height);
+    expect(panelBox.height).toBeLessThanOrEqual(240);
     expect(mapBox.height).toBe(360);
     const chips = panel.locator(".osm-map-tag-chip");
     await expect(chips).toHaveCount(20);
@@ -157,6 +164,13 @@ for (const width of [390, 1200]) {
     await page.keyboard.press("Enter");
     await expect(chips.first()).toHaveAttribute("aria-pressed", "true");
     await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 1 / 20 個地點");
+    await toggle.click();
+    await expect(panel).toBeHidden();
+    await expect(toggle).toHaveText("篩選 (1)");
+    await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 1 / 20 個地點");
+    await toggle.click();
+    await expect(chips.first()).toHaveAttribute("aria-pressed", "true");
+    await chips.first().focus();
     await page.keyboard.press("Space");
     await expect(chips.first()).toHaveAttribute("aria-pressed", "false");
     await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 20 / 20 個地點");

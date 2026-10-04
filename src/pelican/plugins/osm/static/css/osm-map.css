@@ -1149,7 +1149,9 @@
   font-variant-numeric: tabular-nums;
 }
 .osm-map-filters {
-  display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 20px 16px;
+  box-sizing: border-box;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px 16px;
+  max-height: min(240px, 35vh); overflow-y: auto;
   border-top: 1px solid var(--osm-border); background: var(--osm-surface);
 }
 .osm-map-block :is(.osm-map-tag-bar, .osm-map-layer-bar) {
@@ -1157,8 +1159,8 @@
   border: 0; background: transparent;
 }
 .osm-map-filters legend {
-  color: var(--osm-muted); font: inherit; font-size: 15px; font-weight: 600;
-  padding: 0; margin-bottom: 8px; float: none; width: auto;
+  color: var(--osm-muted); font: inherit; font-size: 14px; font-weight: 600; line-height: 1.4;
+  padding: 0; margin-bottom: 4px; float: none; width: auto;
 }
 .osm-map-block :is(.osm-map-tag-chip, .osm-map-layer-chip) {
   display: inline-block; margin: 0; padding: 6px 12px;
@@ -1249,7 +1251,6 @@
 
 @media (max-width: 680px) {
   .osm-explorer-search { flex-basis: 100%; min-width: 0; }
-  .osm-map-filters { gap: 12px; }
   .osm-place-list-wrapper.osm-explorer-list .osm-place-list :is(tbody, tr.osm-place-row) { display: block; }
   .osm-place-list-wrapper.osm-explorer-list .osm-place-list { display: block; width: 100%; }
   /* Headers stay available for sorting on mobile. */

@@ -7,7 +7,7 @@
 - `{% place %}` shortcode renders an independent interactive map per shortcode
 - `{% place_list %}` shortcode renders a sortable table of places with tag filtering, row count, optional grouping, and multi-level collapsible summary headers
 - Search maps and place lists by name or displayed fields; combine map searches with tag and layer filters, see result counts, and clear all filters in one click
-- Collapsible map filters (closed by default on phones), readable mobile place lists with labeled fields, and keyboard-accessible photo controls
+- Collapsible map filters (closed by default), readable mobile place lists with labeled fields, and keyboard-accessible photo controls
 - Multi-value fields (e.g. multiple visit dates) render as joined cells with sort behaviour configurable via JSON Schema hints
 - YAML files converted to GeoJSON at build time — JS fetches them at runtime
 - Flexible spec syntax: single file, single place via `#id`, entire folder, or comma-separated mix
@@ -167,7 +167,7 @@ Each `{% place %}` shortcode renders its own independent map.
 
 Maps and place lists each get a search bar when JavaScript is available. Search is case-insensitive and normalizes Unicode (including fullwidth characters). Both search every public data field, including custom fields, IDs, coordinates, link labels and destinations, image paths, lists and nested values. Fields need not be visible columns to be searchable. Translated fields use the page language; internal metadata and translation payloads are excluded. Map searches include each place's nested items, and list searches include fields moved into group headings. Each component keeps its own search and filters.
 
-On maps, search, tag and layer filters combine with AND logic. The result count updates as you type, and the map fits the matching markers. **Clear filter** resets search and both filters; **Reset view** only restores the original map bounds. Filter options stay in place, with unavailable alternatives disabled. On screens up to 680px wide, map filters start collapsed; the filter button shows the number of selected tag/layer filters even while collapsed.
+On maps, search, tag and layer filters combine with AND logic. The result count updates as you type, and the map fits the matching markers. **Clear filter** resets search and both filters; **Reset view** only restores the original map bounds. Filter options stay in place, with unavailable alternatives disabled. Map filters start collapsed on all screens; the filter button shows the number of selected tag/layer filters even while collapsed. Expanded filters use a compact, scrollable panel so large tag collections keep the map visible.
 
 On phones, place lists display one place per block with column labels beside the values. The name stays first even when `OSM_LIST_COLUMN_ORDER` moves it on desktop. Column headings remain available for sorting. Group collapse, tag filtering and photo viewing still work. Without JavaScript, lists retain their content and labels.
 
