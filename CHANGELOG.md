@@ -1,3 +1,9 @@
+## 0.19.1 (2026-10-04)
+
+### Fix
+
+- move map filters below the map
+
 ## 0.19.0 (2026-10-03)
 
 ### Feat
