@@ -62,6 +62,59 @@ test("map components keep separate queries and languages; deep links restore fil
   await expect(english.locator(".leaflet-popup")).toContainText("Ｃａｆé 日光");
 });
 
+for (const clustered of [true, false]) {
+  test(`cinema search includes hall formats, rows and notes (clustered=${clustered})`, async ({ page }) => {
+    await visit(page, "/groups.html", clustered);
+    const map = page.locator(".osm-map-block");
+    const list = page.locator(".osm-place-list-wrapper");
+    const count = map.locator(".osm-explorer-count");
+    await expect(count).toHaveText("顯示 4 / 4 個地點");
+    for (const [query, places, rows] of [
+      ["IMAX", 2, 2], ["音效清楚", 1, 1], ["H–J", 1, 1], ["臺北", 2, 3],
+      ["新影廳欄位", 1, 1], ["97", 1, 1],
+    ]) {
+      await map.getByRole("searchbox").fill(query);
+      await expect(count).toHaveText(`顯示 ${places} / 4 個地點`);
+      await list.getByRole("searchbox").fill(query);
+      await expect(list.locator(".osm-place-row:visible")).toHaveCount(rows);
+    }
+    await map.getByRole("searchbox").fill("IMAX");
+    await map.getByRole("button", { name: "臺北", exact: true }).click();
+    await expect(count).toHaveText("顯示 1 / 4 個地點");
+    await list.getByRole("searchbox").fill("missing");
+    await expect(count).toHaveText("顯示 1 / 4 個地點");
+    await map.getByRole("button", { name: "清除篩選", exact: true }).click();
+    await expect(count).toHaveText("顯示 4 / 4 個地點");
+    await map.getByRole("searchbox").fill("音效清楚");
+    await expect(count).toHaveText("顯示 1 / 4 個地點");
+    await map.getByRole("button", { name: "松仁影城", exact: true }).click();
+    await expect(map.locator(".osm-popup")).toContainText("松仁影城");
+    await expect(map.locator(".osm-popup")).not.toContainText("_osm_search");
+    await expect(map.getByRole("link", { name: "在表格中檢視" })).toHaveAttribute("href", /osm-place-song-ren/);
+  });
+}
+
+test("map and list search all public values without a field allowlist", async ({ page }) => {
+  await visit(page);
+  const map = page.locator('.osm-map-block[lang="zh-Hant"]');
+  const list = page.locator(".osm-place-list-wrapper");
+  for (const [query, matches] of [
+    ["新欄位也能找到", 1], ["巢狀文字", 1], ["73", 1], ["false", 1],
+    ["park.example/guide", 1], ["公園資訊", 1], ["sample2.svg", 1],
+    ["35.726", 1], ["private-only-value", 0], ["unused-translation", 0],
+  ]) {
+    await map.getByRole("searchbox").fill(query);
+    await expect(map.locator(".osm-explorer-count")).toHaveText(`顯示 ${matches} / 4 個地點`);
+    await list.getByRole("searchbox").fill(query);
+    await expect(list.locator(".osm-place-row:visible")).toHaveCount(matches);
+  }
+  await list.getByRole("searchbox").fill("咖啡");
+  await list.locator(".osm-place-row:visible .osm-badge--tag").filter({ hasText: /^散步$/ }).first().click();
+  await list.getByRole("searchbox").fill("巢狀文字");
+  await expect(list.locator(".osm-place-row:visible")).toHaveCount(1);
+  await expect(list.locator(".osm-place-row:visible")).toContainText("南池袋公園");
+});
+
 test("large layer dropdown composes with search and clearing", async ({ page }) => {
   await visit(page, "/many-layers.html");
   const root = page.locator('.osm-map-block[lang="zh-Hant"]');

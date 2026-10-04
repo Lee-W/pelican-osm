@@ -40,6 +40,11 @@ PLACES = [
         "tags": ["散步", "動畫"],
         "notes": "適合野餐與休息",
         "icon": "🌳",
+        "custom_field": "新欄位也能找到",
+        "details": {"levels": ["巢狀文字", {"count": 73, "enabled": False}]},
+        "urls": [{"label": "公園資訊", "href": "https://park.example/guide"}],
+        "_private": "private-only-value",
+        "translations": {"ja": {"custom_field": "unused-translation"}},
     },
     {
         "id": "cafe",
@@ -222,6 +227,9 @@ def build_fixtures(output: Path) -> None:
             ],
         },
     ]
+    theaters[0]["items"][0]["custom_info"] = {
+        "nested": ["新影廳欄位", {"score": 97}],
+    }
     grouped = _render_place_list_html(
         theaters,
         ["hall", "format", "rows", "notes"],
@@ -235,10 +243,29 @@ def build_fixtures(output: Path) -> None:
     )
     template = (output / "explorer.html").read_text()
     prefix = template.split("<main>", 1)[0]
+    (output / "theaters.geojson").write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [_place_to_feature(p) for p in theaters],
+            },
+            ensure_ascii=False,
+        )
+    )
+    theater_map = _render_place_html(
+        [{"url": "/theaters.geojson"}],
+        [p["name"] for p in theaters],
+        "360px",
+        "/tile.svg?x={x}&y={y}&z={z}",
+        "Preview tiles · OpenStreetMap",
+        layer_field="city",
+        lang="zh-Hant",
+    )
     (output / "groups.html").write_text(
         prefix
         + "<main><h1>影城與影廳</h1>"
         + "<p>依國家、城市與影城分組，找到適合自己的銀幕。</p>"
+        + theater_map
         + grouped
         + "</main></body></html>"
     )

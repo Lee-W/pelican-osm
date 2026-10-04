@@ -916,6 +916,75 @@ class TestPlaceToFeatureItems:
         assert feat["properties"]["name"] == "T"
         assert feat["properties"]["country"] == "TW"
 
+    def test_all_item_field_values_searchable_without_exporting_items(self):
+        place = {
+            "name": "影城",
+            "lat": 25.0,
+            "lon": 121.0,
+            "items": [
+                {
+                    "hall": "6 廳",
+                    "format": "IMAX",
+                    "recommended_rows": ["G", "H"],
+                    "hall_note": "音響很不錯",
+                    "seat_note": "可以試 C 排",
+                    "tags": ["大銀幕"],
+                    "date": datetime.date(2026, 10, 4),
+                    "urls": [{"label": "官方資訊", "href": "https://public.example/"}],
+                    "images": ["public-photo.jpg"],
+                    "_private": "hidden-secret",
+                    "translations": {"ja": {"seat_note": "hidden-translation"}},
+                    "extra": {"custom": ["自訂內容", {"deeper": "更深一層"}]},
+                    "enabled": False,
+                    "capacity": 250,
+                },
+                {"hall": "2 廳", "format": "2D"},
+                "hidden-invalid-item",
+            ],
+        }
+        feat = _place_to_feature(place)
+        assert feat["geometry"]["coordinates"] == [121.0, 25.0]
+        assert "items" not in feat["properties"]
+        search = feat["properties"]["_osm_search"]
+        for term in [
+            "6 廳",
+            "IMAX",
+            "G",
+            "H",
+            "音響很不錯",
+            "可以試 C 排",
+            "大銀幕",
+            "2026-10-04",
+            "2 廳",
+            "2D",
+            "官方資訊",
+            "https://public.example/",
+            "public-photo.jpg",
+            "自訂內容",
+            "更深一層",
+            "False",
+            "250",
+        ]:
+            assert term in search
+        assert "hidden" not in search
+        assert place["items"][0]["translations"]["ja"]["seat_note"] == (
+            "hidden-translation"
+        )
+
+    @pytest.mark.parametrize("items", [None, [], {}, ["invalid"]])
+    def test_parent_fields_searchable_without_valid_items(self, items):
+        feat = _place_to_feature(
+            {
+                "name": "影城",
+                "lat": 25.0,
+                "lon": 121.0,
+                "custom": "任意欄位",
+                "items": items,
+            }
+        )
+        for term in ["影城", "25.0", "121.0", "任意欄位"]:
+            assert term in feat["properties"]["_osm_search"]
+
     def test_osm_type_and_id_kept_in_geojson_properties(self):
         # The front-end JS needs osm_type/osm_id in the feature properties to
         # build the OSM entity link for the popup, so they must NOT be stripped.
@@ -1342,7 +1411,8 @@ class TestRenderPlaceListHtml:
         assert ">A1<" in html
         # Aggregated years rendered, not raw dates
         assert "2018, 2023" in html
-        assert "2018-01-01" not in html
+        assert "2018-01-01" not in " ".join(_data_rows(html)[0])
+        assert "2018-01-01" in html  # Original values remain searchable.
 
     def test_group_summary_at_emits_header_row(self):
         places = [
@@ -1959,7 +2029,7 @@ class TestPlaceListEscaping:
             }
         ]
         html_out = _render_place_list_html(places, [], {})
-        assert "javascript:" not in html_out
+        assert 'href="javascript:' not in html_out
         assert 'href="#"' in html_out
 
     def test_group_header_title_is_escaped(self):

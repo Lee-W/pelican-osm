@@ -229,6 +229,16 @@
   }
 
   // ── Add GeoJSON features to map ───────────────────────────────
+  function searchText(value) {
+    if (Array.isArray(value)) return value.map(searchText).join(" ");
+    if (value && typeof value === "object") {
+      return Object.entries(value)
+        .filter(([key]) => !key.startsWith("_") && key !== "translations")
+        .map(([, part]) => searchText(part)).join(" ");
+    }
+    return String(value ?? "");
+  }
+
   function addFeatures(
     layer,
     features,
@@ -271,10 +281,7 @@
       marker._osmTags = Array.isArray(props.tags) ? props.tags : [];
       marker._osmLayer = layerField ? (props[layerField] || null) : null;
       marker._osmSearch = window.Tabular.normalizeSearch(
-        Object.entries(props)
-          .filter(([key]) => !key.startsWith("_") && !["images", "urls", "items", "translations"].includes(key))
-          .map(([, value]) => Array.isArray(value) ? value.join(" ") : String(value ?? ""))
-          .concat(props._osm_source_name || "").join(" "),
+        [props._osm_search ?? searchText(props), props._osm_source_name || ""].join(" "),
       );
       const images = imagesMap[placeKey] || [];
       marker.bindPopup(buildPopupHtml(props, lat, lon, images, perMapLabels, i18n), {

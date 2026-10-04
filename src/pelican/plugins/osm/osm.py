@@ -215,7 +215,7 @@ def _expand_items(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
     (parent's value wins). Items wanting their own identity column should use
     a distinct field (e.g. ``hall``, ``course``, ``season``).
 
-    The map / GeoJSON path does **not** call this — pins remain at the
+    Maps use the expanded values only for search; pins remain at the
     parent level (one pin per place, regardless of item count).
     """
     result: list[dict[str, Any]] = []
@@ -1280,8 +1280,8 @@ def _render_place_list_html(
         return "<!-- pelican-osm: no places for list -->"
 
     # Flatten nested ``items`` sub-rows into per-item rows. Places without
-    # ``items`` pass through. The map shortcode does NOT do this (one pin
-    # per parent place, items ignored).
+    # ``items`` pass through. Maps keep one pin per parent and index item
+    # fields for search without adding item markers.
     if translations and set(group_by or []) & set(translations.get("fields", [])):
         raise ValueError("OSM_TRANSLATIONS.fields: group fields must stay canonical")
     places = [
@@ -1496,6 +1496,12 @@ def _render_place_list_html(
             classes.append("osm-has-images")
 
         parts = []
+        search = " ".join(
+            dict.fromkeys(
+                _search_text(p, (translations or {}).get("field", "translations"))
+                for p in [row, *(row.get("_places") or [])]
+            )
+        )
         if slug:
             parts.append(f' id="osm-place-{slug}"')
         parts.append(f' class="{" ".join(classes)}"')
@@ -1506,6 +1512,7 @@ def _render_place_list_html(
         weight = len(row.get("_places") or [row])
         if weight > 1:
             parts.append(f' data-row-weight="{weight}"')
+        parts.append(f' data-tabular-search="{html.escape(search, quote=True)}"')
         return "".join(parts)
 
     has_tags = any(row.get("tags") for row in rows) and not is_hidden("tags")
@@ -2181,13 +2188,47 @@ def _resolve_marker_icon(
     return resolved if isinstance(resolved, str) and resolved else None
 
 
+def _search_text(value: Any, translation_field: str = "translations") -> str:
+    """Collect all public field values, including lists and nested mappings."""
+    if isinstance(value, dict):
+        return " ".join(
+            _search_text(part, translation_field)
+            for key, part in value.items()
+            if not str(key).startswith("_") and key != translation_field
+        )
+    if isinstance(value, list):
+        return " ".join(_search_text(part, translation_field) for part in value)
+    return "" if value is None else _format_scalar(value)
+
+
+def _place_search_text(
+    place: dict[str, Any],
+    lang: str,
+    translations: dict[str, Any] | None,
+) -> str:
+    """Search every projected field while keeping one map pin per place."""
+    translation_field = (translations or {}).get("field", "translations")
+    text = []
+    # Project items separately, as in the table. A parent projection alone
+    # leaves item fields in their source language.
+    parent = {key: value for key, value in place.items() if key != "items"}
+    for row in [parent, *_expand_items([place])]:
+        projected = project_record(row, lang, translations, path="OSM_TRANSLATIONS")
+        text.append(_search_text(projected, translation_field))
+    return " ".join(dict.fromkeys(text))
+
+
 def _place_to_feature(
     place: dict[str, Any],
     article_url_map: dict[str, str] | None = None,
     field_schema: dict[str, Any] | None = None,
+    *,
+    lang: str = "en",
+    translations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Convert a single place dict to a GeoJSON Feature."""
-
+    search = _place_search_text(place, lang, translations)
+    place = project_record(place, lang, translations, path="OSM_TRANSLATIONS")
     properties = {}
     for k, v in place.items():
         if k in ("lat", "lon", "images", "items", "icon") or k.startswith("_i18n_"):
@@ -2207,6 +2248,8 @@ def _place_to_feature(
 
     if "urls" in properties:
         properties["urls"] = _normalize_url_field(properties["urls"], article_url_map)
+
+    properties["_osm_search"] = " ".join([search, _search_text(properties)])
 
     if "_i18n_source" in place:
         properties["_osm_source_name"] = place["_i18n_source"].get(
@@ -2245,9 +2288,11 @@ def _yaml_to_geojson(
         "type": "FeatureCollection",
         "features": [
             _place_to_feature(
-                project_record(p, lang, translations, path="OSM_TRANSLATIONS"),
+                p,
                 article_url_map,
                 field_schema,
+                lang=lang,
+                translations=translations,
             )
             for p in valid
         ],
