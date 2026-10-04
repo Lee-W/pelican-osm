@@ -1,3 +1,9 @@
+## 0.19.3 (2026-10-04)
+
+### Fix
+
+- keep map frames wide and popup photos compact
+
 ## 0.19.2 (2026-10-04)
 
 ### Fix
