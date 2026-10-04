@@ -13,6 +13,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
+import yaml
+
+from pelican.plugins.osm import osm
 from pelican.plugins.osm.osm import (
     CATALOG,
     _copy_static,
@@ -81,6 +84,61 @@ PLACES = [
         "icon": "⛩️",
     },
 ]
+
+
+def build_i18n_fixture(output: Path, prefix: str) -> None:
+    source = output / "i18n-places"
+    source.mkdir()
+    places = [
+        {
+            "id": f"place-{i}",
+            "name": f"Source {i}",
+            "lat": 25 + i / 100,
+            "lon": 121 + i / 100,
+            "work": f"Layer {i}",
+            "images": ["/sample.svg"],
+            "translations": {"ja": {"name": f"場所 {i}"}},
+        }
+        for i in range(11)
+    ]
+    (source / "places.yaml").write_text(yaml.safe_dump(places, allow_unicode=True))
+    (source / "_schema.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "properties": {
+                    "work": {
+                        "x-osm-map-layer": True,
+                        "x-osm-list-i18n": {"title": {"en": "Work", "ja": "作品"}},
+                    }
+                }
+            },
+            allow_unicode=True,
+        )
+    )
+    build = SimpleNamespace(
+        settings={
+            "PATH": str(output),
+            "OSM_PLACES_ROOT": str(source),
+            "OUTPUT_PATH": str(output),
+            "OSM_TRANSLATIONS": {"fields": ["name"], "source_lang": "en"},
+            "OSM_MAP_TILE": "/tile.svg?x={x}&y={y}&z={z}",
+            "OSM_LIST_FIELDS": ["work"],
+        }
+    )
+    osm._init_resolver(build)
+    blocks = []
+    for locale in ["en", "ja"]:
+        shortcode = f"{{% place places.yaml lang={locale} %}}"
+        if locale == "ja":
+            shortcode += f"{{% place_list places.yaml lang={locale} %}}"
+        rendered = osm._process_content(
+            shortcode, build.settings["_OSM_CONTEXT"]["resolver"], build.settings
+        )
+        blocks.append(f'<section id="osm-{locale}">{rendered}</section>')
+    osm._export_geojson(build)
+    (output / "i18n.html").write_text(
+        prefix + "<main>" + "\n".join(blocks) + "</main></body></html>"
+    )
 
 
 def build_fixtures(output: Path) -> None:
@@ -281,6 +339,7 @@ def build_fixtures(output: Path) -> None:
         + grouped
         + "</main></body></html>"
     )
+    build_i18n_fixture(output, prefix)
 
 
 def main() -> None:
