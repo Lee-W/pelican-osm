@@ -1141,11 +1141,11 @@
   font-variant-numeric: tabular-nums;
 }
 .osm-map-filters {
-  display: flex; flex-wrap: wrap; gap: 16px 24px; padding: 16px;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding: 20px 16px;
   border-top: 1px solid var(--osm-border); background: var(--osm-surface);
 }
 .osm-map-block :is(.osm-map-tag-bar, .osm-map-layer-bar) {
-  display: block; min-width: 0; flex: 1 1 240px; padding: 0; margin: 0;
+  display: block; min-width: 0; padding: 0; margin: 0;
   border: 0; background: transparent;
 }
 .osm-map-filters legend {
@@ -1153,10 +1153,11 @@
   padding: 0; margin-bottom: 8px; float: none; width: auto;
 }
 .osm-map-block :is(.osm-map-tag-chip, .osm-map-layer-chip) {
-  display: inline-block; margin: 0 4px 6px 0; padding: 5px 10px;
+  display: inline-block; margin: 0; padding: 6px 12px;
   background: var(--osm-subtle); border-color: transparent; font-size: 15px;
   white-space: normal; overflow-wrap: anywhere;
 }
+.osm-map-filter-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .osm-map-block button[aria-pressed="true"] {
   color: var(--osm-accent); border-color: var(--osm-accent);
   background: color-mix(in srgb, var(--osm-accent) 12%, var(--osm-surface));
