@@ -97,6 +97,46 @@ def test_empty_translated_name_keeps_feature_identity(tmp_path):
     assert feature["properties"]["slug"] == "來源名稱"
 
 
+@pytest.mark.parametrize(
+    "locale, note, absent",
+    [
+        ("zh-TW", "音響很不錯", "音響がとてもよい"),
+        ("ja", "音響がとてもよい", "音響很不錯"),
+    ],
+)
+def test_map_search_projects_items_like_table_rows(tmp_path, locale, note, absent):
+    source = tmp_path / "cinema.yaml"
+    source.write_text(
+        "- id: cinema\n  name: 影城\n  lat: 25\n  lon: 121\n"
+        "  note: 來源備註\n  items:\n"
+        "    - hall: 6 廳\n      format: IMAX\n      hall_note: 音響很不錯\n"
+        "      localized:\n        ja:\n          hall_note: 音響がとてもよい\n"
+        "    - hall: 2 廳\n      format: 2D\n      hall_note: 尚未翻譯的備註\n",
+        encoding="utf-8",
+    )
+    config = {
+        "fields": ["note", "hall_note"],
+        "source_lang": "zh-TW",
+        "field": "localized",
+    }
+    before = deepcopy(osm._load_yaml_file(source))
+    collection = osm._yaml_to_geojson(source, lang=locale, translations=config)
+    assert len(collection["features"]) == 1
+    props = collection["features"][0]["properties"]
+    assert props["slug"] == "cinema"
+    search = props["_osm_search"]
+    for value in ["IMAX", "6 廳", note, "尚未翻譯的備註", "來源備註"]:
+        assert value in search
+    assert absent not in search
+    assert "localized" not in search
+    assert osm._load_yaml_file(source) == before
+    rendered = osm._render_place_list_html(
+        before, ["hall", "format"], {}, lang=locale, translations=config
+    )
+    row_search = html.unescape(re.search(r'data-tabular-search="([^"]+)"', rendered)[1])
+    assert note in row_search and absent not in row_search
+
+
 def test_export_uses_own_root_and_locale_after_another_build(tmp_path):
     builds = []
     for locale, name in [("ja", "主站來源"), ("en", "其他站")]:

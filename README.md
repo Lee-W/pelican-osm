@@ -165,7 +165,7 @@ Each `{% place %}` shortcode renders its own independent map.
 
 ## Grouping and summary headers (`place_list`)
 
-Maps and place lists each get a search bar when JavaScript is available. Search is case-insensitive and normalizes Unicode (including fullwidth characters). Maps search names, original names for translated places, tags and place fields such as city or notes. Lists search the text rendered in their rows. Each component keeps its own search and filters.
+Maps and place lists each get a search bar when JavaScript is available. Search is case-insensitive and normalizes Unicode (including fullwidth characters). Both search every public data field, including custom fields, IDs, coordinates, link labels and destinations, image paths, lists and nested values. Fields need not be visible columns to be searchable. Translated fields use the page language; internal metadata and translation payloads are excluded. Map searches include each place's nested items, and list searches include fields moved into group headings. Each component keeps its own search and filters.
 
 On maps, search, tag and layer filters combine with AND logic. The result count updates as you type, and the map fits the matching markers. **Clear filter** resets search and both filters; **Reset view** only restores the original map bounds. Filter options stay in place, with unavailable alternatives disabled. On screens up to 680px wide, map filters start collapsed; the filter button shows the number of selected tag/layer filters even while collapsed.
 
@@ -246,7 +246,7 @@ These plugin-specific display hints do not change schema validation constraints.
 
 ### Nested items: one place, many sub-rows
 
-When a place has multiple variants that share its location — halls within a cinema, seasonal menus at a restaurant, courses on a trail — declare them under an `items:` list. The map renders **one pin per place** (items ignored); `{% place_list %}` flattens, emitting **one row per item** with parent fields cascaded in.
+When a place has multiple variants that share its location — halls within a cinema, seasonal menus at a restaurant, courses on a trail — declare them under an `items:` list. The map renders **one pin per place** and searches item fields to find the parent place; `{% place_list %}` flattens, emitting **one row per item** with parent fields cascaded in.
 
 ```yaml
 # content/places/theaters/taiwan.yaml
