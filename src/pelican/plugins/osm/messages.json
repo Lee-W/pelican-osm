@@ -41,6 +41,11 @@
     "field.series": "Series",
     "search": "Search places…",
     "filters": "Filters",
+    "allFilterValues": "All",
+    "filterSearch": "Search {field}…",
+    "filterOption": "{value} ({n})",
+    "noFilterOptions": "No matching options",
+    "clearFacet": "Clear {field} filter",
     "resultCount": "Showing {shown} / {total} places",
     "noResults": "No matching places. Try another search or clear the filters."
   },
@@ -80,6 +85,11 @@
     "field.series": "系列",
     "search": "搜尋地點…",
     "filters": "篩選",
+    "allFilterValues": "全部",
+    "filterSearch": "搜尋{field}…",
+    "filterOption": "{value}（{n}）",
+    "noFilterOptions": "沒有符合的選項",
+    "clearFacet": "清除{field}篩選",
     "resultCount": "顯示 {shown} / {total} 個地點",
     "noResults": "沒有符合條件的地點，試試其他關鍵字或清除篩選。"
   },
@@ -119,6 +129,11 @@
     "field.series": "シリーズ",
     "search": "場所を検索…",
     "filters": "絞り込み",
+    "allFilterValues": "すべて",
+    "filterSearch": "{field}を検索…",
+    "filterOption": "{value}（{n}）",
+    "noFilterOptions": "一致する選択肢がありません",
+    "clearFacet": "{field}の絞り込みを解除",
     "resultCount": "{total} 件中 {shown} 件を表示",
     "noResults": "一致する場所がありません。検索語を変更するか、絞り込みをクリアしてください。"
   }

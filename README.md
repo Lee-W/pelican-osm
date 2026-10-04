@@ -167,7 +167,9 @@ Each `{% place %}` shortcode renders its own independent map.
 
 Maps and place lists each get a search bar when JavaScript is available. Search is case-insensitive and normalizes Unicode (including fullwidth characters). Both search every public data field, including custom fields, IDs, coordinates, link labels and destinations, image paths, lists and nested values. Fields need not be visible columns to be searchable. Translated fields use the page language; internal metadata and translation payloads are excluded. Map searches include each place's nested items, and list searches include fields moved into group headings. Each component keeps its own search and filters.
 
-On maps, search, tag and layer filters combine with AND logic. The result count updates as you type, and the map fits the matching markers. **Clear filter** resets search and both filters; **Reset view** only restores the original map bounds. Filter options stay in place, with unavailable alternatives disabled. Map filters start collapsed on all screens; the filter button shows the number of selected tag/layer filters even while collapsed. Expanded filters use a compact, scrollable panel so large tag collections keep the map visible.
+On maps, search, tag and layer filters combine with AND logic. The result count updates as you type, and the map fits the matching markers. **Clear filter** resets search and both filters; **Reset view** only restores the original map bounds. Filter options stay in place, with unavailable alternatives disabled. Map filters start collapsed on all screens; the filter button shows the number of selected tag/layer filters even while collapsed. Selected filters appear below the map and can be cleared individually without reopening the panel.
+
+Facets with up to six options show buttons. Larger tag or layer collections use compact searchable pickers, with matching place counts beside each option. Typing in a picker searches its options; choosing an option applies the filter. Arrow keys navigate available options, Enter selects, and Escape closes the picker without changing the selection. Picker searches use the same Unicode normalization as place searches. Popovers keep long option lists out of the page layout and remain available in fullscreen.
 
 On phones, place lists display one place per block with column labels beside the values. The name stays first even when `OSM_LIST_COLUMN_ORDER` moves it on desktop. Column headings remain available for sorting. Group collapse, tag filtering and photo viewing still work. Without JavaScript, lists retain their content and labels.
 
@@ -564,11 +566,11 @@ Rows from `items:` expansion (e.g. one cinema with multiple halls) carry a suffi
 
 ## Tag filtering
 
-Tag badges are clickable in both maps and tables.
+Maps and tables both support filtering by tag.
 
 **In `{% place_list %}` tables:** Clicking a tag filters the table to show only rows with that tag. A filter chip appears next to the row count — click it (or click the same tag again) to clear the filter.
 
-**In `{% place %}` maps:** A tag bar appears below the map when places have tags. Click a tag to show only markers with that tag; click again to show all. The map automatically re-fits to the visible markers.
+**In `{% place %}` maps:** Open **Filters** to choose a tag below the map. Up to six tags appear as buttons; larger collections use a searchable picker. Options include matching place counts. The selected tag remains visible below the map when filters are collapsed; click its × button to remove just that condition. The map automatically re-fits to the matching markers.
 
 ## Marker clustering
 

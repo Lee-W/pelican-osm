@@ -514,7 +514,12 @@
     panel.className = "osm-map-filters";
     panel.id = `${mapEl.id}-filters`;
     panel.hidden = true;
-    mapEl.after(panel);
+    const selected = document.createElement("div");
+    selected.className = "osm-map-selected-filters";
+    selected.setAttribute("role", "group");
+    selected.setAttribute("aria-label", i18n.filters);
+    selected.hidden = true;
+    mapEl.after(selected, panel);
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "osm-explorer-filter-toggle";
@@ -524,7 +529,11 @@
       const n = Number(Boolean(state.tag)) + Number(Boolean(state.layer));
       toggle.textContent = i18n.filters + (n ? ` (${n})` : "");
     }
-    toggle.addEventListener("click", () => { panel.hidden = !panel.hidden; syncToggle(); });
+    toggle.addEventListener("click", () => {
+      panel.hidden = !panel.hidden;
+      if (panel.hidden) panel.dispatchEvent(new Event("osm:close-filters"));
+      syncToggle();
+    });
     tools.controls.insertBefore(toggle, tools.clear);
     const count = document.createElement("div");
     count.className = "osm-explorer-count";
@@ -544,177 +553,246 @@
     return { panel, toggle };
   }
 
-  // ── Map tag filter ────────────────────────────────────────────
-  function setupMapTagFilter(panel, filterCtx, i18n) {
+  // ── Searchable picker for large map facets ─────────────────────
+  function setupFacetPicker(bar, panel, filterCtx, i18n, key, label, values) {
     const { state, apply } = filterCtx;
-    const markers = filterCtx.markers;
+    const id = `${panel.id}-${key}`;
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "osm-map-facet-toggle";
+    trigger.setAttribute("aria-haspopup", "dialog");
+    trigger.setAttribute("aria-controls", `${id}-popup`);
+    trigger.setAttribute("aria-expanded", "false");
+    const popup = document.createElement("div");
+    popup.className = "osm-map-facet-popup";
+    popup.id = `${id}-popup`;
+    popup.hidden = true;
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-label", label);
+    // Native popovers escape the map frame's clipping, including fullscreen.
+    const nativePopover = typeof popup.showPopover === "function";
+    if (nativePopover) popup.setAttribute("popover", "auto");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-label", label);
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-expanded", "false");
+    input.setAttribute("aria-controls", `${id}-options`);
+    input.placeholder = i18n.format("filterSearch", { field: label });
+    const list = document.createElement("div");
+    list.id = `${id}-options`;
+    list.className = "osm-map-facet-options";
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", label);
+    const empty = document.createElement("div");
+    empty.className = "osm-map-facet-empty";
+    empty.setAttribute("role", "status");
+    empty.textContent = i18n.noFilterOptions;
+    empty.hidden = true;
+    popup.append(input, list, empty);
+    bar.append(trigger, popup);
 
-    const allTags = new Set();
-    for (const m of markers) {
-      for (const t of m._osmTags) allTags.add(t);
+    let open = false;
+    let counts = new Map();
+    let total = 0;
+    let activeValue = null;
+
+    function setActive(option) {
+      list.querySelectorAll("[data-active]").forEach((el) => el.removeAttribute("data-active"));
+      activeValue = option?._osmFacetValue ?? null;
+      if (option) {
+        option.setAttribute("data-active", "");
+        input.setAttribute("aria-activedescendant", option.id);
+        option.scrollIntoView({ block: "nearest" });
+      } else {
+        input.removeAttribute("aria-activedescendant");
+      }
     }
-    if (allTags.size === 0) return;
 
-    const bar = document.createElement("fieldset");
-    bar.className = "osm-map-tag-bar";
-    const legend = document.createElement("legend");
-    legend.textContent = i18n.fieldLabels.tags;
-    bar.append(legend);
-    const options = document.createElement("div");
-    options.className = "osm-map-filter-options";
-    bar.append(options);
+    function close(restoreFocus = false) {
+      open = false;
+      if (nativePopover && popup.matches(":popover-open")) popup.hidePopover();
+      popup.hidden = true;
+      trigger.setAttribute("aria-expanded", "false");
+      input.setAttribute("aria-expanded", "false");
+      setActive(null);
+      if (restoreFocus) trigger.focus();
+    }
 
-    function setTag(tag) {
-      state.tag = tag;
+    function choose(value) {
+      state[key] = value || null;
       apply();
+      close(true);
     }
 
-    for (const tag of allTags) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "osm-map-tag-chip";
-      chip.dataset.tag = tag;
-      chip.textContent = tag;
-      chip.addEventListener("click", (e) => {
+    function render() {
+      const query = window.Tabular.normalizeSearch(input.value.trim());
+      list.replaceChildren();
+      for (const [index, value] of ["", ...values].entries()) {
+        if (query && (!value || !window.Tabular.normalizeSearch(value).includes(query))) continue;
+        const n = value ? counts.get(value) || 0 : total;
+        const option = document.createElement("div");
+        option.id = `${list.id}-${index}`;
+        option.className = "osm-map-facet-option";
+        option.dataset.value = value;
+        option._osmFacetValue = value;
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", String(value === (state[key] || "")));
+        option.setAttribute("aria-disabled", String(Boolean(value && !n && state[key] !== value)));
+        option.textContent = i18n.format("filterOption", { value: value || i18n.allFilterValues, n });
+        option.addEventListener("pointerdown", (e) => e.preventDefault());
+        option.addEventListener("click", () => {
+          if (option.getAttribute("aria-disabled") !== "true") choose(value);
+        });
+        list.append(option);
+      }
+      empty.hidden = Boolean(list.children.length);
+      const active = [...list.children].find((el) => el._osmFacetValue === activeValue && el.getAttribute("aria-disabled") !== "true");
+      setActive(active);
+    }
+
+    function position() {
+      if (!open) return;
+      const rect = trigger.getBoundingClientRect();
+      const width = Math.min(Math.max(rect.width, 280), innerWidth - 32);
+      const below = innerHeight - rect.bottom - 8;
+      const above = rect.top - 8;
+      const upwards = below < 280 && above > below;
+      popup.style.width = `${width}px`;
+      popup.style.left = `${Math.max(16, Math.min(rect.left, innerWidth - width - 16))}px`;
+      popup.style.top = upwards ? "auto" : `${rect.bottom + 8}px`;
+      popup.style.bottom = upwards ? `${innerHeight - rect.top + 8}px` : "auto";
+      popup.style.maxHeight = `${Math.max(100, Math.min(320, upwards ? above : below))}px`;
+    }
+
+    trigger.addEventListener("click", () => {
+      if (open) { close(); return; }
+      open = true;
+      input.value = "";
+      activeValue = state[key] || "";
+      popup.hidden = false;
+      if (nativePopover) popup.showPopover();
+      trigger.setAttribute("aria-expanded", "true");
+      input.setAttribute("aria-expanded", "true");
+      position();
+      render();
+      input.focus();
+    });
+    input.addEventListener("input", () => { activeValue = null; render(); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
         e.preventDefault();
-        setTag(state.tag === tag ? null : tag);
+        e.stopPropagation();
+        close(true);
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const options = [...list.children].filter((el) => el.getAttribute("aria-disabled") !== "true");
+        const index = options.findIndex((el) => el._osmFacetValue === activeValue);
+        const next = index < 0 ? (e.key === "ArrowDown" ? 0 : options.length - 1)
+          : Math.max(0, Math.min(options.length - 1, index + (e.key === "ArrowDown" ? 1 : -1)));
+        setActive(options[next]);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (activeValue !== null) choose(activeValue);
+      }
+    });
+    popup.addEventListener("toggle", (e) => { if (e.newState === "closed" && open) close(); });
+    bar.addEventListener("focusout", (e) => { if (!bar.contains(e.relatedTarget)) close(); });
+    document.addEventListener("pointerdown", (e) => { if (open && !bar.contains(e.target)) close(); });
+    panel.addEventListener("osm:close-filters", () => close());
+    window.addEventListener("resize", position);
+    window.addEventListener("scroll", position);
+
+    return (nextCounts, nextTotal) => {
+      counts = nextCounts;
+      total = nextTotal;
+      trigger.textContent = `${state[key] || i18n.allFilterValues} ▾`;
+      trigger.setAttribute("aria-label", `${label}: ${state[key] || i18n.allFilterValues}`);
+      if (open) render();
+    };
+  }
+
+  // Tags and layers use the same counts, selection summary and picker.
+  function setupMapFacet(panel, filterCtx, i18n, key, label, values, markerValues) {
+    const { state, apply, markers } = filterCtx;
+    const bar = document.createElement("fieldset");
+    bar.className = `osm-map-${key}-bar`;
+    const legend = document.createElement("legend");
+    legend.textContent = label;
+    bar.append(legend);
+    if (key === "layer") panel.prepend(bar);
+    else panel.append(bar);
+
+    const selected = panel.parentElement.querySelector(".osm-map-selected-filters");
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "osm-map-active-filter";
+    clear.dataset.filter = key;
+    clear.setAttribute("aria-label", i18n.format("clearFacet", { field: label }));
+    clear.hidden = true;
+    clear.addEventListener("click", () => {
+      state[key] = null;
+      apply();
+      panel.parentElement.querySelector(".osm-explorer-filter-toggle").focus();
+    });
+    selected.append(clear);
+
+    let sync;
+    if (values.length > 6) {
+      sync = setupFacetPicker(bar, panel, filterCtx, i18n, key, label, values);
+    } else {
+      const options = document.createElement("div");
+      options.className = "osm-map-filter-options";
+      const chips = values.map((value) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = `osm-map-${key}-chip`;
+        chip.dataset[key] = value;
+        const count = document.createElement("span");
+        count.className = "osm-map-facet-count";
+        count.setAttribute("aria-hidden", "true");
+        chip.append(document.createTextNode(value), count);
+        chip.addEventListener("click", () => { state[key] = state[key] === value ? null : value; apply(); });
+        options.append(chip);
+        return { chip, count, value };
       });
-      options.appendChild(chip);
+      bar.append(options);
+      sync = (counts) => chips.forEach(({ chip, count, value }) => {
+        const active = state[key] === value;
+        const n = counts.get(value) || 0;
+        chip.classList.toggle(`osm-map-${key}-chip--active`, active);
+        chip.setAttribute("aria-pressed", String(active));
+        chip.setAttribute("aria-description", i18n.formatCount(n));
+        chip.disabled = !active && !n;
+        count.textContent = ` (${n})`;
+      });
     }
 
-    panel.append(bar);
-
-    // Facets consider the other filters so switching tags stays possible.
     filterCtx.onApply(() => {
-      bar.querySelectorAll(".osm-map-tag-chip").forEach((chip) => {
-        const tag = chip.dataset.tag;
-        const active = state.tag === tag;
-        chip.classList.toggle("osm-map-tag-chip--active", active);
-        chip.setAttribute("aria-pressed", String(active));
-        chip.disabled = !active && !markers.some((m) => filterCtx.matches(m, "tag") && m._osmTags.includes(tag));
-      });
+      // Ignore this facet's own selection so alternatives remain available.
+      const candidates = markers.filter((m) => filterCtx.matches(m, key));
+      const counts = new Map(values.map((value) => [value, 0]));
+      candidates.forEach((m) => new Set(markerValues(m)).forEach((value) => {
+        if (counts.has(value)) counts.set(value, counts.get(value) + 1);
+      }));
+      sync(counts, candidates.length);
+      clear.hidden = !state[key];
+      clear.textContent = state[key] ? `${label}: ${state[key]} ×` : "";
+      selected.hidden = !state.tag && !state.layer;
     });
   }
 
-  // ── Layer filter (x-osm-map-layer field) ─────────────────────
+  function setupMapTagFilter(panel, filterCtx, i18n) {
+    const values = [...new Set(filterCtx.markers.flatMap((m) => m._osmTags))]
+      .sort((a, b) => window.Tabular.compare(a, b, "asc", i18n.locale));
+    if (values.length) setupMapFacet(panel, filterCtx, i18n, "tag", i18n.fieldLabels.tags, values, (m) => m._osmTags);
+  }
+
   function setupMapLayerFilter(panel, filterCtx, i18n, perMapLabels, layerField) {
-    const { state, apply, markers } = filterCtx;
-
-    const allLayers = [...new Set(markers.map((m) => m._osmLayer).filter(Boolean))].sort((a, b) => window.Tabular.compare(a, b, "asc", i18n.locale));
-    if (allLayers.length <= 1) return;
-
-    const bar = document.createElement("fieldset");
-    bar.className = "osm-map-layer-bar";
-    const legend = document.createElement("legend");
-    const layerLabel = perMapLabels?.[layerField] ?? i18n.layer;
-    legend.textContent = layerLabel;
-    bar.append(legend);
-    const options = document.createElement("div");
-    options.className = "osm-map-filter-options";
-    bar.append(options);
-
-    if (allLayers.length > 10) {
-      // ── Select + explicit clear button ──────────────────────
-      const labelEl = document.createElement("label");
-      labelEl.className = "osm-map-layer-label";
-      const labelText = document.createElement("span");
-      labelText.className = "osm-sr-only";
-      labelText.textContent = layerLabel;
-      labelEl.append(labelText);
-
-      const select = document.createElement("select");
-      select.className = "osm-map-layer-select";
-      select.setAttribute("aria-label", layerLabel);
-
-      const defaultOpt = document.createElement("option");
-      defaultOpt.value = "";
-      defaultOpt.textContent = i18n.format("allLayers", { n: allLayers.length });
-      select.appendChild(defaultOpt);
-      for (const layer of allLayers) {
-        const opt = document.createElement("option");
-        opt.value = layer;
-        opt.textContent = layer;
-        select.appendChild(opt);
-      }
-
-      const clearBtn = document.createElement("button");
-      clearBtn.type = "button";
-      clearBtn.className = "osm-map-layer-clear";
-      clearBtn.textContent = "✕";
-      clearBtn.title = i18n.clearFilter;
-      clearBtn.setAttribute("aria-label", i18n.clearFilter);
-      clearBtn.style.display = "none";
-
-      function syncClearBtn() {
-        clearBtn.style.display = state.layer ? "" : "none";
-      }
-
-      select.addEventListener("change", () => {
-        state.layer = select.value || null;
-        syncClearBtn();
-        apply();
-      });
-      clearBtn.addEventListener("click", (e) => {
-        e.preventDefault();
-        state.layer = null;
-        select.value = "";
-        syncClearBtn();
-        apply();
-      });
-
-      labelEl.appendChild(select);
-      options.appendChild(labelEl);
-      options.appendChild(clearBtn);
-
-      filterCtx.onApply(() => {
-        // Ignore the selected layer when calculating available alternatives.
-        const tagFiltered = new Set(
-          markers
-            .filter((m) => filterCtx.matches(m, "layer"))
-            .map((m) => m._osmLayer)
-            .filter(Boolean),
-        );
-        select.querySelectorAll("option").forEach((opt) => {
-          if (!opt.value) return;
-          opt.disabled = opt.value !== state.layer && !tagFiltered.has(opt.value);
-        });
-        select.value = state.layer || "";
-        syncClearBtn();
-      });
-
-    } else {
-      // ── Chips (≤ 10 layers) ──────────────────────────────────
-      function setLayer(layer) {
-        state.layer = layer;
-        apply();
-      }
-
-      for (const layer of allLayers) {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "osm-map-layer-chip";
-        chip.dataset.layer = layer;
-        chip.textContent = layer;
-        chip.addEventListener("click", (e) => {
-          e.preventDefault();
-          setLayer(state.layer === layer ? null : layer);
-        });
-        options.appendChild(chip);
-      }
-
-      filterCtx.onApply(() => {
-        const visibleLayers = new Set(markers.filter((m) => filterCtx.matches(m, "layer")).map((m) => m._osmLayer));
-        bar.querySelectorAll(".osm-map-layer-chip").forEach((chip) => {
-          const layer = chip.dataset.layer;
-          const active = state.layer === layer;
-          chip.classList.toggle("osm-map-layer-chip--active", active);
-          chip.setAttribute("aria-pressed", String(active));
-          chip.disabled = !active && !visibleLayers.has(layer);
-        });
-      });
-    }
-
-    panel.prepend(bar);
+    const values = [...new Set(filterCtx.markers.map((m) => m._osmLayer).filter(Boolean))]
+      .sort((a, b) => window.Tabular.compare(a, b, "asc", i18n.locale));
+    if (values.length > 1) setupMapFacet(panel, filterCtx, i18n, "layer", perMapLabels?.[layerField] ?? i18n.layer, values, (m) => [m._osmLayer]);
   }
 
   // ── Map init ──────────────────────────────────────────────────

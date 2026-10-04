@@ -108,8 +108,20 @@ def build_fixtures(output: Path) -> None:
             ],
         ),
         (
+            "numeric-layers",
+            [dict(PLACES[0], id=f"number-{i}", city=i) for i in range(1, 9)],
+        ),
+        (
             "many-layers",
-            [dict(PLACES[0], id=f"p{i}", city=f"City {i}") for i in range(12)],
+            [
+                dict(
+                    PLACES[0],
+                    id=f"p{i}",
+                    city=f"City {i}",
+                    tags=["散步", "動畫", f"城市標籤 {i:02}"],
+                )
+                for i in range(12)
+            ],
         ),
     ]:
         (output / f"{name}.geojson").write_text(
