@@ -96,6 +96,13 @@ def build_fixtures(output: Path) -> None:
     for name, places in [
         ("explorer", PLACES),
         (
+            "many-tags",
+            [
+                dict(PLACES[0], id=f"tag-{i}", tags=[f"作品標籤 {i:02}"])
+                for i in range(20)
+            ],
+        ),
+        (
             "many-layers",
             [dict(PLACES[0], id=f"p{i}", city=f"City {i}") for i in range(12)],
         ),

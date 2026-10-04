@@ -76,6 +76,42 @@ test("large layer dropdown composes with search and clearing", async ({ page }) 
   await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 12 / 12 個地點");
 });
 
+for (const width of [390, 1200]) {
+  test(`many tags wrap below the map with usable spacing at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await visit(page, "/many-tags.html");
+    const root = page.locator('.osm-map-block[lang="zh-Hant"]');
+    const panel = root.locator(".osm-map-filters");
+    if (width < 680) await root.getByRole("button", { name: "篩選", exact: true }).click();
+    const mapBox = await root.locator(".osm-map").boundingBox();
+    const panelBox = await panel.boundingBox();
+    expect(panelBox.y).toBeGreaterThanOrEqual(mapBox.y + mapBox.height);
+    expect(mapBox.height).toBe(360);
+    const chips = panel.locator(".osm-map-tag-chip");
+    await expect(chips).toHaveCount(20);
+    const boxes = await chips.evaluateAll(elements => elements.map(el => {
+      const {x, y, width, height} = el.getBoundingClientRect();
+      return {x, y, width, height};
+    }));
+    for (let i = 0; i < boxes.length; i++) {
+      expect(boxes[i].height).toBeGreaterThanOrEqual(44);
+      if (!i) continue;
+      const previous = boxes[i - 1], current = boxes[i];
+      if (current.y === previous.y) expect(current.x - previous.x - previous.width).toBeGreaterThanOrEqual(8);
+      else expect(current.y - previous.y - previous.height).toBeGreaterThanOrEqual(8);
+    }
+    await chips.first().focus();
+    await page.keyboard.press("Enter");
+    await expect(chips.first()).toHaveAttribute("aria-pressed", "true");
+    await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 1 / 20 個地點");
+    await page.keyboard.press("Space");
+    await expect(chips.first()).toHaveAttribute("aria-pressed", "false");
+    await expect(root.locator(".osm-explorer-count")).toHaveText("顯示 20 / 20 個地點");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await root.screenshot({ path: testInfo.outputPath("filters-below-map.png") });
+  });
+}
+
 test("list search composes with tags, grouping and sorting through Tabular", async ({ page }) => {
   await visit(page);
   const root = page.locator(".osm-place-list-wrapper");
