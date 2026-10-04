@@ -92,6 +92,9 @@
    Map block
    -------------------------------------------------------------------------- */
 .osm-map-block {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
   margin: 1.5em 0;
   border-radius: var(--osm-radius);
   overflow: hidden;
@@ -854,9 +857,14 @@
   border-radius: 2px;
 }
 
-.osm-popup-photo {
+.osm-map-block .osm-popup-photo {
+  display: block;
+  box-sizing: border-box;
+  width: auto;
   height: var(--osm-photo-max-height);
+  max-height: var(--osm-photo-max-height);
   max-width: none;
+  margin: 0;
   flex-shrink: 0;
   border-radius: var(--osm-photo-border-radius);
   object-fit: cover;
@@ -865,7 +873,7 @@
   border: 1px solid transparent;
 }
 
-.osm-popup-photo:hover {
+.osm-map-block .osm-popup-photo:hover {
   transform: scale(1.05);
 }
 
