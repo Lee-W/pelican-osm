@@ -52,7 +52,13 @@ jobs:
           npx playwright install --with-deps chromium
           uv run --project ../pelican-osm --locked pelican examples/database/content -s examples/database/pelicanconf.py -o examples/database/output
           uv run --project ../pelican-osm --locked python scripts/build_browser_fixtures.py --osm-source ../pelican-osm
-          npm run test:browser
+          if [ "${{ steps.tabular.outputs.version }}" = "0.10.2" ]; then
+            # This released case targets the old OSM <select> UI. Its locale and
+            # shared-lightbox coverage lives in OSM's tests/browser/i18n.spec.cjs.
+            npm run test:browser -- --grep-invert 'OSM maps, more-than-ten layers and shared lightbox use the triggering locale'
+          else
+            npm run test:browser
+          fi
 
       - name: Test map explorers and responsive place lists
         run: |
