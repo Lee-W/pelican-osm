@@ -1,3 +1,9 @@
+## 0.19.2 (2026-10-04)
+
+### Fix
+
+- search all place fields in maps and tables
+
 ## 0.19.1 (2026-10-04)
 
 ### Fix
