@@ -507,7 +507,7 @@
     panel.className = "osm-map-filters";
     panel.id = `${mapEl.id}-filters`;
     panel.hidden = window.matchMedia("(max-width: 680px)").matches;
-    root.insertBefore(panel, mapEl);
+    mapEl.after(panel);
     const toggle = document.createElement("button");
     toggle.type = "button";
     toggle.className = "osm-explorer-filter-toggle";
@@ -522,7 +522,7 @@
     const count = document.createElement("div");
     count.className = "osm-explorer-count";
     count.setAttribute("role", "status");
-    root.insertBefore(count, panel);
+    tools.controls.after(count);
     const empty = document.createElement("div");
     empty.className = "osm-map-no-results";
     empty.textContent = i18n.noResults;
@@ -553,6 +553,9 @@
     const legend = document.createElement("legend");
     legend.textContent = i18n.fieldLabels.tags;
     bar.append(legend);
+    const options = document.createElement("div");
+    options.className = "osm-map-filter-options";
+    bar.append(options);
 
     function setTag(tag) {
       state.tag = tag;
@@ -569,7 +572,7 @@
         e.preventDefault();
         setTag(state.tag === tag ? null : tag);
       });
-      bar.appendChild(chip);
+      options.appendChild(chip);
     }
 
     panel.append(bar);
@@ -599,6 +602,9 @@
     const layerLabel = perMapLabels?.[layerField] ?? i18n.layer;
     legend.textContent = layerLabel;
     bar.append(legend);
+    const options = document.createElement("div");
+    options.className = "osm-map-filter-options";
+    bar.append(options);
 
     if (allLayers.length > 10) {
       // ── Select + explicit clear button ──────────────────────
@@ -650,8 +656,8 @@
       });
 
       labelEl.appendChild(select);
-      bar.appendChild(labelEl);
-      bar.appendChild(clearBtn);
+      options.appendChild(labelEl);
+      options.appendChild(clearBtn);
 
       filterCtx.onApply(() => {
         // Ignore the selected layer when calculating available alternatives.
@@ -686,7 +692,7 @@
           e.preventDefault();
           setLayer(state.layer === layer ? null : layer);
         });
-        bar.appendChild(chip);
+        options.appendChild(chip);
       }
 
       filterCtx.onApply(() => {
