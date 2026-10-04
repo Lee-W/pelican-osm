@@ -513,7 +513,7 @@
     const panel = document.createElement("div");
     panel.className = "osm-map-filters";
     panel.id = `${mapEl.id}-filters`;
-    panel.hidden = window.matchMedia("(max-width: 680px)").matches;
+    panel.hidden = true;
     mapEl.after(panel);
     const toggle = document.createElement("button");
     toggle.type = "button";
