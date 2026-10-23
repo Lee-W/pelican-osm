@@ -843,7 +843,7 @@
     // Use marker clustering if Leaflet.markercluster is loaded
     const clusterGroup =
       typeof L.markerClusterGroup === "function"
-        ? L.markerClusterGroup()
+        ? L.markerClusterGroup({ removeOutsideVisibleBounds: false })
         : null;
     const markerLayer = clusterGroup || map;
 
