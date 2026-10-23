@@ -1,3 +1,9 @@
+## 0.20.1 (2026-10-23)
+
+### Fix
+
+- keep popup open after tapping a marker on mobile
+
 ## 0.20.0 (2026-10-04)
 
 ### Feat
