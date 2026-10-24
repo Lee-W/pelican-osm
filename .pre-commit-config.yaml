@@ -61,7 +61,7 @@ repos:
   - id: commitizen
   - id: commitizen-branch
     stages:
-    - post-commit
+    - pre-push
   repo: https://github.com/commitizen-tools/commitizen
   rev: v4.13.9
 - hooks:
