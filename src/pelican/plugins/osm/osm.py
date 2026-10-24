@@ -1033,7 +1033,7 @@ def _resolve_image_url(
 
 
 def _render_place_html(
-    geojson_entries: list[dict],
+    geojson_entries: list[dict[str, Any]],
     names: list[str],
     map_height: str,
     tile_url: str,
@@ -1376,7 +1376,7 @@ def _render_place_list_html(
         if not urls or not isinstance(urls, list):
             return ""
 
-        def link_text(u: dict) -> str:
+        def link_text(u: dict[str, Any]) -> str:
             if label := u.get("label"):
                 return str(label)
             parsed = urlparse(u["href"])
@@ -1698,7 +1698,7 @@ def _process_content(
         re.DOTALL,
     )
 
-    def replace(match: re.Match) -> str:
+    def replace(match: re.Match[str]) -> str:
         raw_args = match.group(1)
         specs, _kwargs = _parse_shortcode_args(raw_args)
         locale = component_locale(
@@ -1707,7 +1707,7 @@ def _process_content(
         settings.setdefault("_OSM_LOCALES", set()).add(locale)
 
         # Each entry: {"url": "...", "fragment": "name_or_id" | None}
-        geojson_entries: list[dict] = []
+        geojson_entries: list[dict[str, Any]] = []
         names: list[str] = []
         name_languages: list[str] = []
         images_map: dict[str, list[str]] = {}
@@ -1816,7 +1816,7 @@ def _process_content(
             messages=settings.get("OSM_MESSAGES"),
         )
 
-    result = cast(str, pattern.sub(replace, content))
+    result = pattern.sub(replace, content)
 
     # ── place_list shortcode ──────────────────────────────────────
     list_shortcode = settings.get("OSM_LIST_SHORTCODE", DEFAULT_LIST_SHORTCODE)
@@ -1825,7 +1825,7 @@ def _process_content(
         re.DOTALL,
     )
 
-    def replace_list(match: re.Match) -> str:
+    def replace_list(match: re.Match[str]) -> str:
         specs, kwargs = _parse_shortcode_args(match.group(1))
         locale = component_locale(
             kwargs.get("lang"), lang, settings.get("DEFAULT_LANG")
@@ -1875,7 +1875,7 @@ def _process_content(
             column_order=settings.get("OSM_LIST_COLUMN_ORDER"),
         )
 
-    result = cast(str, list_pattern.sub(replace_list, result))
+    result = list_pattern.sub(replace_list, result)
     return result
 
 

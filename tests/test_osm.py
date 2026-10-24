@@ -13,24 +13,26 @@ from __future__ import annotations
 import datetime
 import json
 import re
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import yaml
+from pelican.plugins.tabular.core import aggregate_field as _aggregate_field
+from pelican.plugins.tabular.core import extract_year as _extract_year
+from pelican.plugins.tabular.core import extract_years as _extract_years
 
 import pelican.plugins.osm.osm as osm_module
 from pelican import signals  # type: ignore[attr-defined]
 from pelican.plugins.osm.osm import (
     PlaceResolver,
-    _aggregate_field,
     _build_popup_field_labels,
     _collapse_places,
     _copy_static,
     _expand_items,
     _export_geojson,
-    _extract_year,
-    _extract_years,
     _find_schema_for,
     _geojson_url,
     _init_resolver,
@@ -75,6 +77,12 @@ ATTR = DEFAULT_SETTINGS["OSM_MAP_ATTRIBUTION"]
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+def _must_search(pattern: str, string: str, flags: int = 0) -> re.Match[str]:
+    match = re.search(pattern, string, flags)
+    assert match is not None
+    return match
 
 
 @pytest.fixture()
@@ -165,23 +173,25 @@ def resolver(places_root: Path) -> PlaceResolver:
 
 
 class TestLoadYamlFile:
-    def test_locations_format_returns_places(self, places_root):
+    def test_locations_format_returns_places(self, places_root: Path) -> None:
         places = _load_yaml_file(places_root / "japan" / "mygo.yaml")
         assert len(places) == 1
         assert places[0]["name"] == "豊島区立南池袋第二公園"
 
-    def test_locations_format_file_metadata_becomes_defaults(self, places_root):
+    def test_locations_format_file_metadata_becomes_defaults(
+        self, places_root: Path
+    ) -> None:
         places = _load_yaml_file(places_root / "japan" / "mygo.yaml")
         assert places[0]["anime"] == "BanG Dream! It's MyGO!!!!!"
         assert places[0]["tags"] == ["動畫"]
 
-    def test_locations_format_multiple_places(self, places_root):
+    def test_locations_format_multiple_places(self, places_root: Path) -> None:
         places = _load_yaml_file(places_root / "japan" / "tamako.yml")
         assert len(places) == 2
         names = {p["name"] for p in places}
         assert names == {"出町桝形商店街", "鴨川デルタ"}
 
-    def test_locations_format_place_overrides_default(self, tmp_path):
+    def test_locations_format_place_overrides_default(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "country: Japan\n"
@@ -195,18 +205,18 @@ class TestLoadYamlFile:
         places = _load_yaml_file(yml)
         assert places[0]["country"] == "Taiwan"
 
-    def test_dict_format_loads_places(self, places_root):
+    def test_dict_format_loads_places(self, places_root: Path) -> None:
         places = _load_yaml_file(places_root / "taiwan.yml")
         assert len(places) == 2
         ids = {p["id"] for p in places}
         assert ids == {"taipei101", "taroko"}
 
-    def test_dict_format_defaults_applied(self, places_root):
+    def test_dict_format_defaults_applied(self, places_root: Path) -> None:
         places = _load_yaml_file(places_root / "taiwan.yml")
         for p in places:
             assert p["country"] == "Taiwan"
 
-    def test_dict_format_place_overrides_default(self, tmp_path):
+    def test_dict_format_place_overrides_default(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "defaults:\n  country: Japan\n"
@@ -216,12 +226,12 @@ class TestLoadYamlFile:
         places = _load_yaml_file(yml)
         assert places[0]["country"] == "Override"
 
-    def test_bare_list_format(self, places_root):
+    def test_bare_list_format(self, places_root: Path) -> None:
         places = _load_yaml_file(places_root / "bare.yml")
         assert len(places) == 2
         assert {p["name"] for p in places} == {"Place A", "Place B"}
 
-    def test_bare_list_with_defaults_item(self, tmp_path):
+    def test_bare_list_with_defaults_item(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "- defaults:\n    country: Japan\n- name: A\n  lat: 1.0\n  lon: 2.0\n",
@@ -231,12 +241,12 @@ class TestLoadYamlFile:
         assert len(places) == 1
         assert places[0]["country"] == "Japan"
 
-    def test_empty_file_returns_empty_list(self, tmp_path):
+    def test_empty_file_returns_empty_list(self, tmp_path: Path) -> None:
         yml = tmp_path / "empty.yml"
         yml.write_text("", encoding="utf-8")
         assert _load_yaml_file(yml) == []
 
-    def test_date_loaded_as_string_or_date_object(self, tmp_path):
+    def test_date_loaded_as_string_or_date_object(self, tmp_path: Path) -> None:
         """YAML may parse unquoted dates as datetime.date — acceptable either way."""
         import datetime
 
@@ -251,7 +261,9 @@ class TestLoadYamlFile:
 
     # ── tag append-merge across all 3 formats ─────────────────────────────
 
-    def test_locations_format_tags_unioned_with_per_location(self, tmp_path):
+    def test_locations_format_tags_unioned_with_per_location(
+        self, tmp_path: Path
+    ) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "tags: [動畫]\n"
@@ -263,8 +275,8 @@ class TestLoadYamlFile:
         assert places[0]["tags"] == ["動畫", "已歇業"]
 
     def test_locations_format_empty_per_location_tags_preserve_file_tags(
-        self, tmp_path
-    ):
+        self, tmp_path: Path
+    ) -> None:
         # Regression: previously `tags: []` overrode file-level tags
         yml = tmp_path / "test.yml"
         yml.write_text(
@@ -276,7 +288,7 @@ class TestLoadYamlFile:
         places = _load_yaml_file(yml)
         assert places[0]["tags"] == ["動畫"]
 
-    def test_dict_format_tags_unioned(self, tmp_path):
+    def test_dict_format_tags_unioned(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "defaults:\n  tags: [coworking]\n"
@@ -286,7 +298,7 @@ class TestLoadYamlFile:
         places = _load_yaml_file(yml)
         assert places[0]["tags"] == ["coworking", "台北"]
 
-    def test_bare_list_format_tags_unioned(self, tmp_path):
+    def test_bare_list_format_tags_unioned(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "- defaults:\n    tags: [動畫]\n"
@@ -303,40 +315,40 @@ class TestLoadYamlFile:
 
 
 class TestMergePlace:
-    def test_non_tag_fields_overridden_by_per_place(self):
+    def test_non_tag_fields_overridden_by_per_place(self) -> None:
         result = _merge_place({"country": "Japan"}, {"country": "Taiwan"})
         assert result["country"] == "Taiwan"
 
-    def test_per_place_only_fields_kept(self):
+    def test_per_place_only_fields_kept(self) -> None:
         result = _merge_place({}, {"name": "A"})
         assert result["name"] == "A"
 
-    def test_file_only_fields_propagate(self):
+    def test_file_only_fields_propagate(self) -> None:
         result = _merge_place({"anime": "MyGO"}, {"name": "A"})
         assert result["anime"] == "MyGO"
         assert result["name"] == "A"
 
-    def test_tags_unioned_with_file_first(self):
+    def test_tags_unioned_with_file_first(self) -> None:
         result = _merge_place({"tags": ["動畫"]}, {"tags": ["已歇業"]})
         assert result["tags"] == ["動畫", "已歇業"]
 
-    def test_tag_duplicates_collapsed(self):
+    def test_tag_duplicates_collapsed(self) -> None:
         result = _merge_place({"tags": ["動畫", "電影"]}, {"tags": ["動畫"]})
         assert result["tags"] == ["動畫", "電影"]
 
-    def test_empty_per_place_tags_preserves_file_tags(self):
+    def test_empty_per_place_tags_preserves_file_tags(self) -> None:
         result = _merge_place({"tags": ["動畫"]}, {"tags": []})
         assert result["tags"] == ["動畫"]
 
-    def test_no_per_place_tags_preserves_file_tags(self):
+    def test_no_per_place_tags_preserves_file_tags(self) -> None:
         result = _merge_place({"tags": ["動畫"]}, {})
         assert result["tags"] == ["動畫"]
 
-    def test_no_file_tags_keeps_per_place_tags(self):
+    def test_no_file_tags_keeps_per_place_tags(self) -> None:
         result = _merge_place({}, {"tags": ["已歇業"]})
         assert result["tags"] == ["已歇業"]
 
-    def test_neither_has_tags_no_tags_key(self):
+    def test_neither_has_tags_no_tags_key(self) -> None:
         result = _merge_place({"country": "Japan"}, {"name": "A"})
         assert "tags" not in result
 
@@ -347,15 +359,15 @@ class TestMergePlace:
 
 
 class TestExpandItems:
-    def test_no_items_passes_through(self):
+    def test_no_items_passes_through(self) -> None:
         result = _expand_items([{"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP"}])
         assert result == [{"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP"}]
 
-    def test_empty_items_drops_key(self):
+    def test_empty_items_drops_key(self) -> None:
         result = _expand_items([{"name": "A", "lat": 1.0, "lon": 2.0, "items": []}])
         assert result == [{"name": "A", "lat": 1.0, "lon": 2.0}]
 
-    def test_items_expand_inheriting_parent_fields(self):
+    def test_items_expand_inheriting_parent_fields(self) -> None:
         result = _expand_items(
             [
                 {
@@ -381,7 +393,7 @@ class TestExpandItems:
         assert result[1]["rows"] == "E"
         assert "items" not in result[0]
 
-    def test_item_field_overrides_non_protected_parent_field(self):
+    def test_item_field_overrides_non_protected_parent_field(self) -> None:
         # Item-level fields win on collision for everything except the
         # parent-only set (name/lat/lon).
         result = _expand_items(
@@ -397,7 +409,7 @@ class TestExpandItems:
         )
         assert result[0]["note"] == "child"
 
-    def test_item_name_is_dropped(self, caplog):
+    def test_item_name_is_dropped(self, caplog: pytest.LogCaptureFixture) -> None:
         # Items are sub-rows of one place; ``name`` belongs to the parent.
         # A name on an item is dropped (parent wins) and a warning is logged.
         with caplog.at_level("WARNING"):
@@ -415,7 +427,7 @@ class TestExpandItems:
         assert result[0]["hall"] == "H"
         assert any("'name'" in rec.message for rec in caplog.records)
 
-    def test_item_lat_lon_are_dropped(self, caplog):
+    def test_item_lat_lon_are_dropped(self, caplog: pytest.LogCaptureFixture) -> None:
         with caplog.at_level("WARNING"):
             result = _expand_items(
                 [
@@ -433,7 +445,7 @@ class TestExpandItems:
         assert "'lat'" in msgs
         assert "'lon'" in msgs
 
-    def test_tags_union_parent_then_item(self):
+    def test_tags_union_parent_then_item(self) -> None:
         result = _expand_items(
             [
                 {
@@ -447,7 +459,7 @@ class TestExpandItems:
         )
         assert result[0]["tags"] == ["theater", "imax"]
 
-    def test_non_dict_items_skipped(self):
+    def test_non_dict_items_skipped(self) -> None:
         result = _expand_items(
             [
                 {
@@ -461,7 +473,7 @@ class TestExpandItems:
         assert len(result) == 1
         assert result[0]["hall"] == "H1"
 
-    def test_mixed_with_and_without_items(self):
+    def test_mixed_with_and_without_items(self) -> None:
         result = _expand_items(
             [
                 {"name": "Solo", "lat": 1.0, "lon": 2.0},
@@ -486,7 +498,7 @@ class TestExpandItems:
 
 
 class TestRenderPlaceListHtmlItems:
-    def test_items_render_as_separate_rows(self):
+    def test_items_render_as_separate_rows(self) -> None:
         places = [
             {
                 "name": "松仁威秀",
@@ -506,7 +518,7 @@ class TestRenderPlaceListHtmlItems:
         # Parent's name cascades to every row's name cell (one row per item).
         assert html.count('data-sort-value="松仁威秀"') == 2
 
-    def test_group_summary_at_with_parent_field(self):
+    def test_group_summary_at_with_parent_field(self) -> None:
         places = [
             {
                 "name": "T1",
@@ -535,7 +547,7 @@ class TestRenderPlaceListHtmlItems:
         # 3 data rows (T1+H1, T1+H2, T2+H3), each with a row anchor.
         assert html.count('id="osm-place-') == 3
 
-    def test_items_field_not_a_column(self):
+    def test_items_field_not_a_column(self) -> None:
         places = [
             {
                 "name": "T",
@@ -548,7 +560,7 @@ class TestRenderPlaceListHtmlItems:
         # The 'items' key should not appear as a column header
         assert "<th>Items</th>" not in html
 
-    def test_items_not_merged_when_group_by_matches_parent_only(self):
+    def test_items_not_merged_when_group_by_matches_parent_only(self) -> None:
         # Regression: with group_by="country,name" (parent's identifying
         # fields) and *no* aggregate, items of one parent share the same
         # group-key tuple. They must still render as separate rows — auto
@@ -573,7 +585,7 @@ class TestRenderPlaceListHtmlItems:
             group_by=["country", "name"],
             group_summary_at=["country", "name"],
         )
-        tbody = re.search(r"<tbody>(.*?)</tbody>", html, re.DOTALL).group(1)
+        tbody = _must_search(r"<tbody>(.*?)</tbody>", html, re.DOTALL).group(1)
         # Three data rows (H1/H2/H3); group headers don't live inside <tr>
         # without class — strip those out by counting only data <tr>.
         data_rows = [
@@ -585,7 +597,7 @@ class TestRenderPlaceListHtmlItems:
         assert "H2" in html
         assert "H3" in html
 
-    def test_name_in_summary_drops_name_column(self):
+    def test_name_in_summary_drops_name_column(self) -> None:
         # When name is hoisted into group_summary_at, the data rows no
         # longer carry a Name column — each row is identified by its
         # item-specific field (e.g. ``hall``).
@@ -605,12 +617,12 @@ class TestRenderPlaceListHtmlItems:
             group_by=["country", "name"],
             group_summary_at=["country", "name"],
         )
-        thead = re.search(r"<thead>(.*?)</thead>", html, re.DOTALL).group(1)
+        thead = _must_search(r"<thead>(.*?)</thead>", html, re.DOTALL).group(1)
         assert "<th>Name</th>" not in thead
         # Hall column is still present
         assert ">Hall<" in thead
 
-    def test_name_summary_header_includes_map_links(self):
+    def test_name_summary_header_includes_map_links(self) -> None:
         # When name is the summary field at a depth, the header for that
         # depth carries the place's 🗺️·📍 map links (same span structure
         # used in data-row name cells).
@@ -695,7 +707,12 @@ _ORDER_PLACES = [
 _FIELDS = ["country", "city"]
 
 
-def _render_order(order, places=None, fields=None, **kwargs):
+def _render_order(
+    order: Any,
+    places: Any = None,
+    fields: Any = None,
+    **kwargs: Any,
+) -> str:
     return _render_place_list_html(
         _ORDER_PLACES if places is None else places,
         _FIELDS if fields is None else fields,
@@ -706,16 +723,16 @@ def _render_order(order, places=None, fields=None, **kwargs):
 
 
 class TestRenderPlaceListColumnOrder:
-    def test_default_order(self):
+    def test_default_order(self) -> None:
         html = _render_order(None)
         assert _header_labels(html) == ["Name", "Country", "City", "Links", "🖼"]
         assert _data_rows(html)[0][0] == "A"
         assert _data_rows(html)[0][-1] == "img"
 
-    def test_empty_list_equals_unset(self):
+    def test_empty_list_equals_unset(self) -> None:
         assert _render_order([]) == _render_order(None)
 
-    def test_name_then_images(self):
+    def test_name_then_images(self) -> None:
         html = _render_order(["name", "images"])
         assert _header_labels(html) == ["Name", "🖼", "Country", "City", "Links"]
         rows = _data_rows(html)
@@ -723,36 +740,36 @@ class TestRenderPlaceListColumnOrder:
         assert rows[0][:3] == ["A", "img", "TW"]
         assert rows[1][:3] == ["B", "empty", "TW"]
 
-    def test_urls_first(self):
+    def test_urls_first(self) -> None:
         html = _render_order(["urls"])
         assert _header_labels(html) == ["Links", "Name", "Country", "City", "🖼"]
         assert all(len(r) == 5 for r in _data_rows(html))
 
-    def test_data_field_ids_can_be_ordered(self):
+    def test_data_field_ids_can_be_ordered(self) -> None:
         html = _render_order(["city", "name"])
         assert _header_labels(html) == ["City", "Name", "Country", "Links", "🖼"]
         assert _data_rows(html)[0][:2] == ["X", "A"]
 
-    def test_unknown_keys_skipped(self):
+    def test_unknown_keys_skipped(self) -> None:
         html = _render_order(["nope", "images", "tags"])
         assert _header_labels(html) == ["🖼", "Name", "Country", "City", "Links"]
 
-    def test_name_hoisted_to_summary_is_skipped(self):
+    def test_name_hoisted_to_summary_is_skipped(self) -> None:
         html = _render_order(
             ["name", "images"], group_by=["name"], group_summary_at=["name"]
         )
         assert _header_labels(html) == ["🖼", "Country", "City", "Links"]
 
-    def test_images_skipped_when_table_has_no_images(self):
+    def test_images_skipped_when_table_has_no_images(self) -> None:
         places = [{k: v for k, v in p.items() if k != "images"} for p in _ORDER_PLACES]
         html = _render_order(["images", "city"], places=places)
         assert _header_labels(html) == ["City", "Name", "Country", "Links"]
 
-    def test_unlisted_columns_keep_default_order_after_listed(self):
+    def test_unlisted_columns_keep_default_order_after_listed(self) -> None:
         html = _render_order(["urls", "country"])
         assert _header_labels(html) == ["Links", "Country", "Name", "City", "🖼"]
 
-    def test_group_header_colspan_matches_columns(self):
+    def test_group_header_colspan_matches_columns(self) -> None:
         html = _render_order(
             ["images", "name"], group_by=["country"], group_summary_at=["country"]
         )
@@ -765,7 +782,7 @@ class TestRenderPlaceListColumnOrder:
             )
         )
 
-    def test_images_sidecar_unchanged(self):
+    def test_images_sidecar_unchanged(self) -> None:
         pat = r'<script type="application/json" class="osm-list-images">.*?</script>'
         a = re.search(pat, _render_order(None))
         b = re.search(pat, _render_order(["images"]))
@@ -776,11 +793,11 @@ class TestRenderPlaceListColumnOrder:
     @pytest.mark.parametrize(
         "bad", ["name", ("name",), {"name": 1}, ["name", 1], ["name", "name"], 5]
     )
-    def test_invalid_values_raise(self, bad):
+    def test_invalid_values_raise(self, bad: Any) -> None:
         with pytest.raises(ValueError, match="OSM_LIST_COLUMN_ORDER"):
             _render_order(bad)
 
-    def test_setting_reaches_renderer(self, tmp_path):
+    def test_setting_reaches_renderer(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "a.yaml").write_text(
@@ -813,10 +830,12 @@ class TestRenderPlaceListColumnOrder:
 
 
 class TestRenderPlaceListHtmlOsmEntityLink:
-    def _name_cell(self, html):
-        return re.search(r"<td data-sort-value[^>]*>.*?</td>", html, re.DOTALL).group()
+    def _name_cell(self, html: str) -> str:
+        return _must_search(
+            r"<td data-sort-value[^>]*>.*?</td>", html, re.DOTALL
+        ).group()
 
-    def test_entity_link_used_when_osm_type_and_id_present(self):
+    def test_entity_link_used_when_osm_type_and_id_present(self) -> None:
         places = [
             {
                 "name": "A",
@@ -830,7 +849,7 @@ class TestRenderPlaceListHtmlOsmEntityLink:
         assert 'href="https://www.openstreetmap.org/node/123"' in cell
         assert "mlat=" not in cell
 
-    def test_way_and_relation_are_valid_types(self):
+    def test_way_and_relation_are_valid_types(self) -> None:
         for osm_type in ("way", "relation"):
             places = [
                 {
@@ -844,18 +863,18 @@ class TestRenderPlaceListHtmlOsmEntityLink:
             cell = self._name_cell(_render_place_list_html(places, [], {}))
             assert f'href="https://www.openstreetmap.org/{osm_type}/9"' in cell
 
-    def test_falls_back_to_coords_when_osm_id_missing(self):
+    def test_falls_back_to_coords_when_osm_id_missing(self) -> None:
         places = [{"name": "A", "lat": 25.03, "lon": 121.56, "osm_type": "node"}]
         cell = self._name_cell(_render_place_list_html(places, [], {}))
         assert "mlat=25.03" in cell
         assert "openstreetmap.org/node" not in cell
 
-    def test_falls_back_to_coords_when_osm_type_missing(self):
+    def test_falls_back_to_coords_when_osm_type_missing(self) -> None:
         places = [{"name": "A", "lat": 25.03, "lon": 121.56, "osm_id": 123}]
         cell = self._name_cell(_render_place_list_html(places, [], {}))
         assert "mlat=25.03" in cell
 
-    def test_falls_back_to_coords_when_osm_type_invalid(self):
+    def test_falls_back_to_coords_when_osm_type_invalid(self) -> None:
         places = [
             {
                 "name": "A",
@@ -869,7 +888,7 @@ class TestRenderPlaceListHtmlOsmEntityLink:
         assert "mlat=25.03" in cell
         assert "openstreetmap.org/foo" not in cell
 
-    def test_osm_type_and_id_not_rendered_as_columns(self):
+    def test_osm_type_and_id_not_rendered_as_columns(self) -> None:
         places = [
             {
                 "name": "A",
@@ -889,7 +908,7 @@ class TestRenderPlaceListHtmlOsmEntityLink:
                 "osm_id": {"title": "OSM ID"},
             },
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "OSM 類型" not in thead
         assert "osm_type" not in thead
         assert "osm_id" not in thead
@@ -902,7 +921,7 @@ class TestRenderPlaceListHtmlOsmEntityLink:
 
 
 class TestPlaceToFeatureItems:
-    def test_items_stripped_from_geojson_properties(self):
+    def test_items_stripped_from_geojson_properties(self) -> None:
         feat = _place_to_feature(
             {
                 "name": "T",
@@ -916,8 +935,8 @@ class TestPlaceToFeatureItems:
         assert feat["properties"]["name"] == "T"
         assert feat["properties"]["country"] == "TW"
 
-    def test_all_item_field_values_searchable_without_exporting_items(self):
-        place = {
+    def test_all_item_field_values_searchable_without_exporting_items(self) -> None:
+        place: dict[str, Any] = {
             "name": "影城",
             "lat": 25.0,
             "lon": 121.0,
@@ -972,7 +991,7 @@ class TestPlaceToFeatureItems:
         )
 
     @pytest.mark.parametrize("items", [None, [], {}, ["invalid"]])
-    def test_parent_fields_searchable_without_valid_items(self, items):
+    def test_parent_fields_searchable_without_valid_items(self, items: Any) -> None:
         feat = _place_to_feature(
             {
                 "name": "影城",
@@ -985,7 +1004,7 @@ class TestPlaceToFeatureItems:
         for term in ["影城", "25.0", "121.0", "任意欄位"]:
             assert term in feat["properties"]["_osm_search"]
 
-    def test_osm_type_and_id_kept_in_geojson_properties(self):
+    def test_osm_type_and_id_kept_in_geojson_properties(self) -> None:
         # The front-end JS needs osm_type/osm_id in the feature properties to
         # build the OSM entity link for the popup, so they must NOT be stripped.
         feat = _place_to_feature(
@@ -1007,35 +1026,35 @@ class TestPlaceToFeatureItems:
 
 
 class TestParseShortcodeArgs:
-    def test_legacy_single_spec(self):
+    def test_legacy_single_spec(self) -> None:
         positional, kwargs = _parse_shortcode_args("pilgrimage")
         assert positional == ["pilgrimage"]
         assert kwargs == {}
 
-    def test_legacy_comma_separated_specs(self):
+    def test_legacy_comma_separated_specs(self) -> None:
         positional, kwargs = _parse_shortcode_args("japan/tamako.yml, taiwan.yml")
         assert positional == ["japan/tamako.yml", "taiwan.yml"]
         assert kwargs == {}
 
-    def test_legacy_no_split_on_kwargs_when_no_equals(self):
+    def test_legacy_no_split_on_kwargs_when_no_equals(self) -> None:
         # No `=` means we never invoke shlex; this is the backwards-compat path
         positional, kwargs = _parse_shortcode_args("a, b , c")
         assert positional == ["a", "b", "c"]
         assert kwargs == {}
 
-    def test_kwarg_with_unquoted_value(self):
+    def test_kwarg_with_unquoted_value(self) -> None:
         positional, kwargs = _parse_shortcode_args("pilgrimage sort=date:asc")
         assert positional == ["pilgrimage"]
         assert kwargs == {"sort": "date:asc"}
 
-    def test_kwarg_with_quoted_comma_value(self):
+    def test_kwarg_with_quoted_comma_value(self) -> None:
         positional, kwargs = _parse_shortcode_args(
             'pilgrimage group_by="anime,country,city"'
         )
         assert positional == ["pilgrimage"]
         assert kwargs == {"group_by": "anime,country,city"}
 
-    def test_multiple_kwargs(self):
+    def test_multiple_kwargs(self) -> None:
         positional, kwargs = _parse_shortcode_args(
             'pilgrimage group_by="anime" aggregate="date:year" sort=date:asc'
         )
@@ -1046,14 +1065,14 @@ class TestParseShortcodeArgs:
             "sort": "date:asc",
         }
 
-    def test_positional_plus_kwarg(self):
+    def test_positional_plus_kwarg(self) -> None:
         positional, kwargs = _parse_shortcode_args(
             'japan/tamako.yml, taiwan.yml group_by="country"'
         )
         assert positional == ["japan/tamako.yml", "taiwan.yml"]
         assert kwargs == {"group_by": "country"}
 
-    def test_only_kwargs(self):
+    def test_only_kwargs(self) -> None:
         positional, kwargs = _parse_shortcode_args('group_by="anime"')
         assert positional == []
         assert kwargs == {"group_by": "anime"}
@@ -1065,40 +1084,40 @@ class TestParseShortcodeArgs:
 
 
 class TestParseCsvKwarg:
-    def test_single(self):
+    def test_single(self) -> None:
         assert _parse_csv_kwarg("anime") == ["anime"]
 
-    def test_multiple(self):
+    def test_multiple(self) -> None:
         assert _parse_csv_kwarg("anime,country,city") == ["anime", "country", "city"]
 
-    def test_strips_whitespace(self):
+    def test_strips_whitespace(self) -> None:
         assert _parse_csv_kwarg(" anime , country ") == ["anime", "country"]
 
-    def test_empty(self):
+    def test_empty(self) -> None:
         assert _parse_csv_kwarg("") == []
 
-    def test_drops_empty_tokens(self):
+    def test_drops_empty_tokens(self) -> None:
         assert _parse_csv_kwarg("a,,b") == ["a", "b"]
 
 
 class TestParseAggregateKwarg:
-    def test_single(self):
+    def test_single(self) -> None:
         assert _parse_aggregate_kwarg("date:year") == {"date": "year"}
 
-    def test_multiple(self):
+    def test_multiple(self) -> None:
         assert _parse_aggregate_kwarg("date:year,visits:sum") == {
             "date": "year",
             "visits": "sum",
         }
 
-    def test_empty(self):
+    def test_empty(self) -> None:
         assert _parse_aggregate_kwarg("") == {}
 
-    def test_token_without_colon_is_ignored(self):
+    def test_token_without_colon_is_ignored(self) -> None:
         # ``oops`` has no ``:`` and is silently dropped; the rest still parses
         assert _parse_aggregate_kwarg("date:year,oops") == {"date": "year"}
 
-    def test_strips_whitespace(self):
+    def test_strips_whitespace(self) -> None:
         assert _parse_aggregate_kwarg(" date : year ") == {"date": "year"}
 
 
@@ -1108,41 +1127,41 @@ class TestParseAggregateKwarg:
 
 
 class TestExtractYear:
-    def test_date_object(self):
+    def test_date_object(self) -> None:
         assert _extract_year(datetime.date(2024, 5, 1)) == 2024
 
-    def test_datetime_object(self):
+    def test_datetime_object(self) -> None:
         assert _extract_year(datetime.datetime(2024, 5, 1, 10, 30)) == 2024
 
-    def test_iso_string(self):
+    def test_iso_string(self) -> None:
         assert _extract_year("2024-05-01") == 2024
 
-    def test_year_only_string(self):
+    def test_year_only_string(self) -> None:
         assert _extract_year("2024") == 2024
 
-    def test_int_year(self):
+    def test_int_year(self) -> None:
         assert _extract_year(2024) == 2024
 
-    def test_int_out_of_range(self):
+    def test_int_out_of_range(self) -> None:
         # A small int isn't a year; we don't want stray counts becoming dates
         assert _extract_year(42) is None
 
-    def test_none(self):
+    def test_none(self) -> None:
         assert _extract_year(None) is None
 
-    def test_empty_string(self):
+    def test_empty_string(self) -> None:
         assert _extract_year("") is None
 
-    def test_garbage_string(self):
+    def test_garbage_string(self) -> None:
         assert _extract_year("foo") is None
 
-    def test_list_returns_first_year(self):
+    def test_list_returns_first_year(self) -> None:
         assert _extract_year(["2024-05-01", "2025-03-10"]) == 2024
 
-    def test_list_skips_non_dates(self):
+    def test_list_skips_non_dates(self) -> None:
         assert _extract_year(["foo", "2025-01-01"]) == 2025
 
-    def test_empty_list(self):
+    def test_empty_list(self) -> None:
         assert _extract_year([]) is None
 
 
@@ -1152,24 +1171,24 @@ class TestExtractYear:
 
 
 class TestExtractYears:
-    def test_single_date(self):
+    def test_single_date(self) -> None:
         assert _extract_years("2024-05-01") == [2024]
 
-    def test_list_of_dates(self):
+    def test_list_of_dates(self) -> None:
         assert _extract_years(["2024-05-01", "2025-03-10"]) == [2024, 2025]
 
-    def test_list_with_date_objects(self):
+    def test_list_with_date_objects(self) -> None:
         assert _extract_years(
             [datetime.date(2024, 5, 1), datetime.date(2025, 3, 10)]
         ) == [2024, 2025]
 
-    def test_list_skips_non_dates(self):
+    def test_list_skips_non_dates(self) -> None:
         assert _extract_years(["foo", "2025-01-01"]) == [2025]
 
-    def test_none(self):
+    def test_none(self) -> None:
         assert _extract_years(None) == []
 
-    def test_empty_list(self):
+    def test_empty_list(self) -> None:
         assert _extract_years([]) == []
 
 
@@ -1179,7 +1198,7 @@ class TestExtractYears:
 
 
 class TestAggregateField:
-    def test_year_unique_sorted(self):
+    def test_year_unique_sorted(self) -> None:
         places = [
             {"date": "2023-01-01"},
             {"date": "2018-05-05"},
@@ -1187,32 +1206,32 @@ class TestAggregateField:
         ]
         assert _aggregate_field("year", "date", places) == "2018, 2023"
 
-    def test_year_with_missing_dates(self):
-        places = [{"date": ""}, {}, {"date": None}]
+    def test_year_with_missing_dates(self) -> None:
+        places: list[dict[str, Any]] = [{"date": ""}, {}, {"date": None}]
         assert _aggregate_field("year", "date", places) == ""
 
-    def test_year_mixed_types(self):
-        places = [
+    def test_year_mixed_types(self) -> None:
+        places: list[dict[str, Any]] = [
             {"date": datetime.date(2024, 5, 1)},
             {"date": "2025-01-01"},
         ]
         assert _aggregate_field("year", "date", places) == "2024, 2025"
 
-    def test_year_with_list_dates(self):
+    def test_year_with_list_dates(self) -> None:
         places = [
             {"date": ["2018-05-01", "2019-03-10"]},
             {"date": ["2023-06-01"]},
         ]
         assert _aggregate_field("year", "date", places) == "2018, 2019, 2023"
 
-    def test_year_mixed_single_and_list(self):
-        places = [
+    def test_year_mixed_single_and_list(self) -> None:
+        places: list[dict[str, Any]] = [
             {"date": "2018-05-01"},
             {"date": ["2019-03-10", "2020-11-01"]},
         ]
         assert _aggregate_field("year", "date", places) == "2018, 2019, 2020"
 
-    def test_unknown_op_returns_empty(self):
+    def test_unknown_op_returns_empty(self) -> None:
         # Unknown ops are logged and produce empty string rather than raising
         assert _aggregate_field("nonexistent", "date", [{"date": "2024"}]) == ""
 
@@ -1225,7 +1244,7 @@ class TestAggregateField:
 class TestCollapsePlaces:
     # Without aggregate: rows are preserved, just bucketed for tree rendering.
 
-    def test_no_aggregate_preserves_every_row(self):
+    def test_no_aggregate_preserves_every_row(self) -> None:
         places = [
             {"name": "A", "anime": "X"},
             {"name": "B", "anime": "X"},
@@ -1236,7 +1255,7 @@ class TestCollapsePlaces:
         assert all(len(r["_places"]) == 1 for r in rows)
         assert [r["name"] for r in rows] == ["A", "B", "C"]
 
-    def test_no_aggregate_buckets_interleaved_keys_into_contiguous_runs(self):
+    def test_no_aggregate_buckets_interleaved_keys_into_contiguous_runs(self) -> None:
         # Z first appears at index 0, X at index 1; Z's bucket emits first
         # (with both Z rows contiguous in original order), then X.
         places = [
@@ -1247,7 +1266,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {})
         assert [r["name"] for r in rows] == ["A", "C", "B"]
 
-    def test_no_aggregate_keeps_per_row_field_values(self):
+    def test_no_aggregate_keeps_per_row_field_values(self) -> None:
         # First-non-empty merging only applies when aggregating; without it,
         # every row keeps its own values verbatim.
         places = [
@@ -1257,7 +1276,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {})
         assert [r["category"] for r in rows] == ["", "商店街"]
 
-    def test_no_aggregate_does_not_union_tags(self):
+    def test_no_aggregate_does_not_union_tags(self) -> None:
         places = [
             {"name": "A", "anime": "X", "tags": ["動畫"]},
             {"name": "B", "anime": "X", "tags": ["已歇業"]},
@@ -1265,7 +1284,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {})
         assert [r["tags"] for r in rows] == [["動畫"], ["已歇業"]]
 
-    def test_no_aggregate_multi_field_buckets_by_tuple(self):
+    def test_no_aggregate_multi_field_buckets_by_tuple(self) -> None:
         places = [
             {"name": "A", "anime": "X", "city": "K"},
             {"name": "B", "anime": "X", "city": "T"},
@@ -1276,7 +1295,7 @@ class TestCollapsePlaces:
 
     # With aggregate: SQL-style collapse + merge.
 
-    def test_aggregate_collapses_into_one_row_per_key(self):
+    def test_aggregate_collapses_into_one_row_per_key(self) -> None:
         places = [
             {"name": "A", "anime": "X", "date": "2018-05-01"},
             {"name": "B", "anime": "X", "date": "2023-06-01"},
@@ -1287,7 +1306,7 @@ class TestCollapsePlaces:
         x_row = next(r for r in rows if r["anime"] == "X")
         assert len(x_row["_places"]) == 2
 
-    def test_aggregate_multi_field_collapses_by_tuple(self):
+    def test_aggregate_multi_field_collapses_by_tuple(self) -> None:
         places = [
             {"name": "A", "anime": "X", "city": "K", "date": "2018"},
             {"name": "B", "anime": "X", "city": "T", "date": "2019"},
@@ -1298,7 +1317,7 @@ class TestCollapsePlaces:
         k_row = next(r for r in rows if r["city"] == "K")
         assert len(k_row["_places"]) == 2
 
-    def test_aggregate_year_collapses_dates(self):
+    def test_aggregate_year_collapses_dates(self) -> None:
         places = [
             {"name": "A", "anime": "X", "date": "2018-05-01"},
             {"name": "B", "anime": "X", "date": "2023-06-01"},
@@ -1307,7 +1326,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["date"] == "2018, 2023"
 
-    def test_aggregate_year_with_all_missing_dates_yields_empty(self):
+    def test_aggregate_year_with_all_missing_dates_yields_empty(self) -> None:
         places = [
             {"name": "A", "anime": "X", "date": ""},
             {"name": "B", "anime": "X"},
@@ -1315,7 +1334,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["date"] == ""
 
-    def test_aggregate_unions_tags_across_group(self):
+    def test_aggregate_unions_tags_across_group(self) -> None:
         places = [
             {"name": "A", "anime": "X", "date": "2018", "tags": ["動畫"]},
             {"name": "B", "anime": "X", "date": "2019", "tags": ["已歇業"]},
@@ -1323,7 +1342,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["tags"] == ["動畫", "已歇業"]
 
-    def test_aggregate_first_non_empty_wins_for_non_aggregate_fields(self):
+    def test_aggregate_first_non_empty_wins_for_non_aggregate_fields(self) -> None:
         places = [
             {"name": "A", "anime": "X", "date": "2018", "category": ""},
             {"name": "B", "anime": "X", "date": "2019", "category": "商店街"},
@@ -1331,7 +1350,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert rows[0]["category"] == "商店街"
 
-    def test_aggregate_order_preserves_first_appearance_of_keys(self):
+    def test_aggregate_order_preserves_first_appearance_of_keys(self) -> None:
         places = [
             {"name": "A", "anime": "Z", "date": "2018"},
             {"name": "B", "anime": "X", "date": "2019"},
@@ -1340,7 +1359,7 @@ class TestCollapsePlaces:
         rows = _collapse_places(places, ["anime"], {"date": "year"})
         assert [r["anime"] for r in rows] == ["Z", "X"]
 
-    def test_aggregate_field_not_overwritten_by_first_non_empty(self):
+    def test_aggregate_field_not_overwritten_by_first_non_empty(self) -> None:
         # The aggregate logic should win even if the original place had a
         # value: the row date should be replaced with the aggregated string.
         places = [
@@ -1357,13 +1376,13 @@ class TestCollapsePlaces:
 
 
 class TestRenderPlaceListHtml:
-    def test_empty_returns_comment(self):
+    def test_empty_returns_comment(self) -> None:
         assert (
             _render_place_list_html([], [], {})
             == "<!-- pelican-osm: no places for list -->"
         )
 
-    def test_flat_path_no_group_header(self):
+    def test_flat_path_no_group_header(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "city": "K"},
             {"name": "B", "lat": 3.0, "lon": 4.0, "city": "T"},
@@ -1373,7 +1392,7 @@ class TestRenderPlaceListHtml:
         assert ">A<" in html
         assert ">B<" in html
 
-    def test_group_by_collapses_rows_in_html(self):
+    def test_group_by_collapses_rows_in_html(self) -> None:
         places = [
             {
                 "name": "A1",
@@ -1414,7 +1433,7 @@ class TestRenderPlaceListHtml:
         assert "2018-01-01" not in " ".join(_data_rows(html)[0])
         assert "2018-01-01" in html  # Original values remain searchable.
 
-    def test_group_summary_at_emits_header_row(self):
+    def test_group_summary_at_emits_header_row(self) -> None:
         places = [
             {"name": "A1", "lat": 1.0, "lon": 2.0, "anime": "X", "city": "K"},
             {"name": "A2", "lat": 1.0, "lon": 2.0, "anime": "X", "city": "T"},
@@ -1433,7 +1452,7 @@ class TestRenderPlaceListHtml:
         assert "X" in html
         assert "Y" in html
 
-    def test_group_summary_at_removes_field_from_data_columns(self):
+    def test_group_summary_at_removes_field_from_data_columns(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X", "city": "K"},
         ]
@@ -1449,7 +1468,7 @@ class TestRenderPlaceListHtml:
         # Name column + city column = 2 <th>; "anime" column was hoisted
         assert thead.group().count("<th>") == 2
 
-    def test_group_summary_at_without_group_by_falls_back_to_flat(self):
+    def test_group_summary_at_without_group_by_falls_back_to_flat(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X"},
         ]
@@ -1461,7 +1480,7 @@ class TestRenderPlaceListHtml:
         )
         assert "osm-group-header" not in html
 
-    def test_group_summary_at_not_a_prefix_falls_back_to_flat(self):
+    def test_group_summary_at_not_a_prefix_falls_back_to_flat(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X", "country": "JP"},
         ]
@@ -1474,7 +1493,7 @@ class TestRenderPlaceListHtml:
         )
         assert "osm-group-header" not in html
 
-    def test_group_count_template_supports_i18n(self):
+    def test_group_count_template_supports_i18n(self) -> None:
         # Custom template lets sites render the count in their own language
         # without patching the plugin source.
         places = [
@@ -1492,7 +1511,7 @@ class TestRenderPlaceListHtml:
         assert "2 個地點" in html
         assert "places" not in html
 
-    def test_group_count_template_empty_omits_count(self):
+    def test_group_count_template_empty_omits_count(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X"},
         ]
@@ -1507,7 +1526,7 @@ class TestRenderPlaceListHtml:
         assert "osm-group-header" in html
         assert "osm-group-count" not in html
 
-    def test_group_summary_count_reflects_original_places(self):
+    def test_group_summary_count_reflects_original_places(self) -> None:
         # Two K-ON places collapse into one row but the header should still
         # report "2 places" so the user sees the underlying count.
         places = [
@@ -1538,7 +1557,7 @@ class TestRenderPlaceListHtml:
         )
         assert "2 places" in html
 
-    def test_group_summary_at_nested_emits_per_depth_headers(self):
+    def test_group_summary_at_nested_emits_per_depth_headers(self) -> None:
         # Two depths → each row gets a depth-0 + depth-1 header on first
         # appearance; depth-0 is NOT repeated when only depth-1 changes.
         places = [
@@ -1558,7 +1577,7 @@ class TestRenderPlaceListHtml:
         assert 'data-depth="0"' in html
         assert 'data-depth="1"' in html
 
-    def test_group_summary_at_nested_counts_at_each_level(self):
+    def test_group_summary_at_nested_counts_at_each_level(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "T"},
             {"name": "B", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "O"},
@@ -1575,7 +1594,7 @@ class TestRenderPlaceListHtml:
         assert "2 places" in html
         assert "1 places" in html
 
-    def test_group_summary_at_nested_emits_anchor_ids(self):
+    def test_group_summary_at_nested_emits_anchor_ids(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "country": "JP", "city": "Tokyo"},
         ]
@@ -1589,7 +1608,7 @@ class TestRenderPlaceListHtml:
         assert 'id="osm-group--jp"' in html
         assert 'id="osm-group--jp--tokyo"' in html
 
-    def test_list_cell_joins_with_default_separator(self):
+    def test_list_cell_joins_with_default_separator(self) -> None:
         # A multi-visit place: list value gets joined for display.
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024-01-01", "2025-03-12"]},
@@ -1597,7 +1616,7 @@ class TestRenderPlaceListHtml:
         html = _render_place_list_html(places, ["date"], {})
         assert "2024-01-01, 2025-03-12" in html
 
-    def test_list_cell_custom_separator_via_schema(self):
+    def test_list_cell_custom_separator_via_schema(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024", "2025"]},
         ]
@@ -1609,7 +1628,7 @@ class TestRenderPlaceListHtml:
         )
         assert "2024 · 2025" in html
 
-    def test_list_cell_sort_max_emits_data_sort_value(self):
+    def test_list_cell_sort_max_emits_data_sort_value(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024-01-01", "2025-03-12"]},
         ]
@@ -1622,7 +1641,7 @@ class TestRenderPlaceListHtml:
         # Most recent visit is what sort should compare against.
         assert 'data-sort-value="2025-03-12"' in html
 
-    def test_list_cell_sort_min_emits_data_sort_value(self):
+    def test_list_cell_sort_min_emits_data_sort_value(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2025-03-12", "2024-01-01"]},
         ]
@@ -1634,7 +1653,7 @@ class TestRenderPlaceListHtml:
         )
         assert 'data-sort-value="2024-01-01"' in html
 
-    def test_list_cell_datetime_items_render_iso(self):
+    def test_list_cell_datetime_items_render_iso(self) -> None:
         # PyYAML produces datetime.date for unquoted dates; the list cell must
         # not leak Python repr into the HTML.
         places = [
@@ -1655,7 +1674,7 @@ class TestRenderPlaceListHtml:
         assert "datetime.date" not in html
         assert 'data-sort-value="2025-03-12"' in html
 
-    def test_scalar_datetime_renders_iso(self):
+    def test_scalar_datetime_renders_iso(self) -> None:
         # Backward compat: a scalar date value still renders as ISO.
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": datetime.date(2024, 1, 1)},
@@ -1664,7 +1683,7 @@ class TestRenderPlaceListHtml:
         assert "2024-01-01" in html
         assert "datetime.date" not in html
 
-    def test_list_cell_no_sort_hint_omits_data_sort_value(self):
+    def test_list_cell_no_sort_hint_omits_data_sort_value(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": ["2024", "2025"]},
         ]
@@ -1674,7 +1693,7 @@ class TestRenderPlaceListHtml:
         # one occurrence overall (the Name cell, not the Date cell).
         assert html.count("data-sort-value=") == 1
 
-    def test_schema_title_drives_column_header(self):
+    def test_schema_title_drives_column_header(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2024-01-01"},
         ]
@@ -1684,10 +1703,10 @@ class TestRenderPlaceListHtml:
             {},
             field_schema={"date": {"title": "日期"}},
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>日期</th>" in thead
 
-    def test_schema_title_overrides_field_labels(self):
+    def test_schema_title_overrides_field_labels(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2024-01-01"},
         ]
@@ -1697,11 +1716,11 @@ class TestRenderPlaceListHtml:
             {"date": "Visited"},  # OSM_LIST_FIELD_LABELS
             field_schema={"date": {"title": "日期"}},  # schema wins
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>日期</th>" in thead
         assert "Visited" not in thead
 
-    def test_field_labels_used_when_schema_has_no_title(self):
+    def test_field_labels_used_when_schema_has_no_title(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "date": "2024-01-01"},
         ]
@@ -1711,10 +1730,10 @@ class TestRenderPlaceListHtml:
             {"date": "Visited"},
             field_schema={"date": {"type": "string"}},  # no title
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>Visited</th>" in thead
 
-    def test_hidden_field_excluded_from_auto_detected_columns(self):
+    def test_hidden_field_excluded_from_auto_detected_columns(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "internal": "x"},
         ]
@@ -1724,11 +1743,11 @@ class TestRenderPlaceListHtml:
             {},
             field_schema={"internal": {"x-osm-list-hidden": True}},
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "internal" not in thead.lower()
         assert "city" in thead.lower() or "City" in thead
 
-    def test_icon_field_excluded_from_auto_detected_columns(self):
+    def test_icon_field_excluded_from_auto_detected_columns(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "icon": "🍜"},
         ]
@@ -1737,11 +1756,11 @@ class TestRenderPlaceListHtml:
             [],  # auto-detect, no OSM_LIST_FIELDS configured
             {},
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "icon" not in thead.lower()
         assert "city" in thead.lower() or "City" in thead
 
-    def test_hidden_field_excluded_from_explicit_fields(self):
+    def test_hidden_field_excluded_from_explicit_fields(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo", "internal": "x"},
         ]
@@ -1751,10 +1770,10 @@ class TestRenderPlaceListHtml:
             {},
             field_schema={"internal": {"x-osm-list-hidden": True}},
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "internal" not in thead.lower()
 
-    def test_hidden_field_still_usable_for_group_by(self):
+    def test_hidden_field_still_usable_for_group_by(self) -> None:
         # Hidden fields stay in the data so group_by/sort/aggregate still work.
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "X", "internal_order": 1},
@@ -1772,7 +1791,7 @@ class TestRenderPlaceListHtml:
         assert "osm-group-header" in html
         assert "internal_order" not in html
 
-    def test_hidden_tags_drops_tags_column(self):
+    def test_hidden_tags_drops_tags_column(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "tags": ["x"]},
         ]
@@ -1782,10 +1801,10 @@ class TestRenderPlaceListHtml:
             {},
             field_schema={"tags": {"x-osm-list-hidden": True}},
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>Tags</th>" not in thead
 
-    def test_hidden_urls_drops_links_column(self):
+    def test_hidden_urls_drops_links_column(self) -> None:
         places = [
             {
                 "name": "A",
@@ -1800,10 +1819,10 @@ class TestRenderPlaceListHtml:
             {},
             field_schema={"urls": {"x-osm-list-hidden": True}},
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>Links</th>" not in thead
 
-    def test_schema_title_applies_to_reserved_columns(self):
+    def test_schema_title_applies_to_reserved_columns(self) -> None:
         # name / tags / urls are special-cased columns but should still honor
         # schema title so the whole header row can be translated from one place.
         places = [
@@ -1825,12 +1844,12 @@ class TestRenderPlaceListHtml:
                 "urls": {"title": "連結"},
             },
         )
-        thead = re.search(r"<thead>.*?</thead>", html, re.DOTALL).group()
+        thead = _must_search(r"<thead>.*?</thead>", html, re.DOTALL).group()
         assert "<th>地點</th>" in thead
         assert "<th>標籤</th>" in thead
         assert "<th>連結</th>" in thead
 
-    def test_images_row_gets_class_icon_and_json_sidecar(self):
+    def test_images_row_gets_class_icon_and_json_sidecar(self) -> None:
         places = [
             {
                 "name": "A",
@@ -1857,12 +1876,12 @@ class TestRenderPlaceListHtml:
         payload = json.loads(sidecar.group(1))
         assert payload == {"a": ["https://example.com/a.jpg"]}
 
-    def test_images_no_sidecar_when_no_rows_have_images(self):
+    def test_images_no_sidecar_when_no_rows_have_images(self) -> None:
         places = [{"name": "A", "lat": 1.0, "lon": 2.0}]
         html = _render_place_list_html(places, [], {})
         assert "osm-list-images" not in html
 
-    def test_images_no_indicator_without_images(self):
+    def test_images_no_indicator_without_images(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "city": "Tokyo"},
         ]
@@ -1870,14 +1889,14 @@ class TestRenderPlaceListHtml:
         assert "osm-has-images" not in html
         assert "osm-list-image-col-header" not in html
 
-    def test_images_resolves_relative_path_with_siteurl(self):
+    def test_images_resolves_relative_path_with_siteurl(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "images": ["images/photo.jpg"]},
         ]
         html = _render_place_list_html(places, [], {}, siteurl="https://example.com")
         assert "https://example.com/images/photo.jpg" in html
 
-    def test_images_string_value_gets_icon(self):
+    def test_images_string_value_gets_icon(self) -> None:
         places = [
             {
                 "name": "A",
@@ -1897,20 +1916,20 @@ class TestRenderPlaceListHtml:
 
 
 class TestPlaceRowAnchors:
-    def test_row_carries_slugged_id(self):
+    def test_row_carries_slugged_id(self) -> None:
         places = [{"name": "A1", "lat": 1.0, "lon": 2.0}]
         html = _render_place_list_html(places, [], {})
         assert 'id="osm-place-a1"' in html
         assert 'class="osm-place-row"' in html
         assert 'data-osm-place-slug="a1"' in html
 
-    def test_id_field_wins_over_name(self):
+    def test_id_field_wins_over_name(self) -> None:
         places = [{"id": "stable-key", "name": "Pretty Name", "lat": 1.0, "lon": 2.0}]
         html = _render_place_list_html(places, [], {})
         assert 'id="osm-place-stable-key"' in html
         assert "osm-place-pretty-name" not in html
 
-    def test_collision_appends_suffix(self):
+    def test_collision_appends_suffix(self) -> None:
         # Two rows resolving to the same base slug must get distinct ids
         # so the HTML stays valid and anchors deep-link to the right row.
         places = [
@@ -1921,7 +1940,7 @@ class TestPlaceRowAnchors:
         assert 'id="osm-place-same"' in html
         assert 'id="osm-place-same-2"' in html
 
-    def test_items_expansion_uses_item_field_as_suffix(self):
+    def test_items_expansion_uses_item_field_as_suffix(self) -> None:
         # When items have a distinguishing field (here `hall`), the anchor
         # incorporates it so links read as cinema-h1 instead of cinema-2.
         places = [
@@ -1940,7 +1959,7 @@ class TestPlaceRowAnchors:
         # still find any of the expanded rows.
         assert html.count('data-osm-parent-slug="cinema"') == 3
 
-    def test_items_expansion_falls_back_to_numeric_suffix(self):
+    def test_items_expansion_falls_back_to_numeric_suffix(self) -> None:
         # When item dicts collapse to the same suffix (or have no
         # distinguishing values), dedup adds a numeric tail.
         places = [
@@ -1955,14 +1974,14 @@ class TestPlaceRowAnchors:
         assert 'id="osm-place-cinema-h1"' in html
         assert 'id="osm-place-cinema-h1-2"' in html
 
-    def test_non_item_rows_have_no_parent_slug_attr(self):
+    def test_non_item_rows_have_no_parent_slug_attr(self) -> None:
         # Plain (no items-expansion) rows must not carry the parent-slug
         # fallback attribute — it'd just bloat the HTML for nothing.
         places = [{"name": "A", "lat": 1.0, "lon": 2.0}]
         html = _render_place_list_html(places, [], {})
         assert "data-osm-parent-slug" not in html
 
-    def test_row_class_combines_with_has_images(self):
+    def test_row_class_combines_with_has_images(self) -> None:
         places = [
             {
                 "name": "A",
@@ -1974,19 +1993,19 @@ class TestPlaceRowAnchors:
         html = _render_place_list_html(places, [], {})
         assert 'class="osm-place-row osm-has-images"' in html
 
-    def test_geojson_includes_slug(self):
+    def test_geojson_includes_slug(self) -> None:
         feat = _place_to_feature(
             {"name": "豊島区立南池袋第二公園", "lat": 1.0, "lon": 2.0}
         )
         assert feat["properties"]["slug"] == "豊島区立南池袋第二公園"
 
-    def test_geojson_slug_prefers_id(self):
+    def test_geojson_slug_prefers_id(self) -> None:
         feat = _place_to_feature(
             {"id": "south-park", "name": "South Park", "lat": 1.0, "lon": 2.0}
         )
         assert feat["properties"]["slug"] == "south-park"
 
-    def test_geojson_no_slug_when_name_blank(self):
+    def test_geojson_no_slug_when_name_blank(self) -> None:
         # name="" fails _validate_place upstream, but defend the helper anyway
         # so a malformed feature doesn't blow up the export.
         feat = _place_to_feature({"name": "", "lat": 1.0, "lon": 2.0})
@@ -1999,13 +2018,13 @@ class TestPlaceRowAnchors:
 
 
 class TestPlaceListEscaping:
-    def test_name_is_escaped_in_attr_and_text(self):
+    def test_name_is_escaped_in_attr_and_text(self) -> None:
         places = [{"name": "<img src=x onerror=alert(1)>", "lat": 1.0, "lon": 2.0}]
         html_out = _render_place_list_html(places, [], {})
         assert "<img src=x onerror=alert(1)>" not in html_out
         assert "&lt;img src=x onerror=alert(1)&gt;" in html_out
 
-    def test_tag_value_is_escaped(self):
+    def test_tag_value_is_escaped(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "tags": ["<script>alert(1)</script>"]}
         ]
@@ -2013,13 +2032,13 @@ class TestPlaceListEscaping:
         assert "<script>alert(1)</script>" not in html_out
         assert "&lt;script&gt;" in html_out
 
-    def test_field_value_is_escaped(self):
+    def test_field_value_is_escaped(self) -> None:
         places = [{"name": "A", "lat": 1.0, "lon": 2.0, "note": "<b>bold</b>"}]
         html_out = _render_place_list_html(places, ["note"], {})
         assert "<b>bold</b>" not in html_out
         assert "&lt;b&gt;bold&lt;/b&gt;" in html_out
 
-    def test_javascript_url_dropped_in_urls(self):
+    def test_javascript_url_dropped_in_urls(self) -> None:
         places = [
             {
                 "name": "A",
@@ -2032,7 +2051,7 @@ class TestPlaceListEscaping:
         assert 'href="javascript:' not in html_out
         assert 'href="#"' in html_out
 
-    def test_group_header_title_is_escaped(self):
+    def test_group_header_title_is_escaped(self) -> None:
         places = [
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "<svg onload=alert(1)>"}
         ]
@@ -2049,16 +2068,16 @@ class TestPlaceListEscaping:
 
 
 class TestValidatePlace:
-    def test_valid(self):
+    def test_valid(self) -> None:
         assert _validate_place({"name": "A", "lat": 1.0, "lon": 2.0}, "test") is True
 
-    def test_missing_name(self):
+    def test_missing_name(self) -> None:
         assert _validate_place({"lat": 1.0, "lon": 2.0}, "test") is False
 
-    def test_missing_lat(self):
+    def test_missing_lat(self) -> None:
         assert _validate_place({"name": "A", "lon": 2.0}, "test") is False
 
-    def test_missing_lon(self):
+    def test_missing_lon(self) -> None:
         assert _validate_place({"name": "A", "lat": 1.0}, "test") is False
 
 
@@ -2068,47 +2087,65 @@ class TestValidatePlace:
 
 
 class TestResolveTopaths:
-    def test_file_with_extension(self, resolver, places_root):
+    def test_file_with_extension(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         paths = resolver.resolve_to_paths("japan/tamako.yml")
         assert paths == [places_root / "japan" / "tamako.yml"]
 
-    def test_file_yaml_extension(self, resolver, places_root):
+    def test_file_yaml_extension(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         paths = resolver.resolve_to_paths("japan/mygo.yaml")
         assert paths == [places_root / "japan" / "mygo.yaml"]
 
-    def test_file_without_extension_tries_yml_then_yaml(self, resolver, places_root):
+    def test_file_without_extension_tries_yml_then_yaml(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         # taiwan has .yml
         paths = resolver.resolve_to_paths("taiwan")
         assert paths == [places_root / "taiwan.yml"]
 
-    def test_directory_returns_all_yaml_files(self, resolver, places_root):
+    def test_directory_returns_all_yaml_files(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         paths = resolver.resolve_to_paths("japan")
         assert set(paths) == {
             places_root / "japan" / "mygo.yaml",
             places_root / "japan" / "tamako.yml",
         }
 
-    def test_directory_with_trailing_slash(self, resolver, places_root):
+    def test_directory_with_trailing_slash(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         paths = resolver.resolve_to_paths("japan/")
         assert len(paths) == 2
 
-    def test_dot_returns_all_under_root(self, resolver, places_root):
+    def test_dot_returns_all_under_root(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         paths = resolver.resolve_to_paths(".")
         assert len(paths) == 4  # mygo.yaml, tamako.yml, taiwan.yml, bare.yml
 
-    def test_empty_string_returns_all_under_root(self, resolver, places_root):
+    def test_empty_string_returns_all_under_root(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         assert resolver.resolve_to_paths("") == resolver.resolve_to_paths(".")
 
-    def test_root_name_returns_all(self, resolver, places_root):
+    def test_root_name_returns_all(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         # spec == root folder name should load entire root
         paths = resolver.resolve_to_paths(places_root.name)
         assert len(paths) == 4
 
-    def test_fragment_stripped_before_path_resolution(self, resolver, places_root):
+    def test_fragment_stripped_before_path_resolution(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         paths = resolver.resolve_to_paths("japan/tamako.yml#出町桝形商店街")
         assert paths == [places_root / "japan" / "tamako.yml"]
 
-    def test_nonexistent_returns_empty(self, resolver):
+    def test_nonexistent_returns_empty(self, resolver: PlaceResolver) -> None:
         assert resolver.resolve_to_paths("nowhere/nope.yml") == []
 
 
@@ -2118,37 +2155,39 @@ class TestResolveTopaths:
 
 
 class TestResolve:
-    def test_file_loads_all_places(self, resolver):
+    def test_file_loads_all_places(self, resolver: PlaceResolver) -> None:
         places = resolver.resolve("japan/tamako.yml")
         assert len(places) == 2
 
-    def test_both_yml_and_yaml_extensions(self, resolver):
+    def test_both_yml_and_yaml_extensions(self, resolver: PlaceResolver) -> None:
         assert len(resolver.resolve("japan/tamako.yml")) == 2
         assert len(resolver.resolve("japan/mygo.yaml")) == 1
 
-    def test_fragment_by_name(self, resolver):
+    def test_fragment_by_name(self, resolver: PlaceResolver) -> None:
         places = resolver.resolve("japan/tamako.yml#出町桝形商店街")
         assert len(places) == 1
         assert places[0]["name"] == "出町桝形商店街"
 
-    def test_fragment_by_id(self, resolver):
+    def test_fragment_by_id(self, resolver: PlaceResolver) -> None:
         places = resolver.resolve("taiwan.yml#taipei101")
         assert len(places) == 1
         assert places[0]["name"] == "台北101"
 
-    def test_fragment_not_found_returns_empty(self, resolver):
+    def test_fragment_not_found_returns_empty(self, resolver: PlaceResolver) -> None:
         assert resolver.resolve("japan/tamako.yml#doesnotexist") == []
 
-    def test_directory_loads_all_places(self, resolver):
+    def test_directory_loads_all_places(self, resolver: PlaceResolver) -> None:
         places = resolver.resolve("japan")
         assert len(places) == 3  # 1 from mygo + 2 from tamako
 
-    def test_root_name_spec_loads_all(self, resolver, places_root):
+    def test_root_name_spec_loads_all(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         all_places = resolver.resolve(places_root.name)
         assert len(all_places) > 0
         assert len(all_places) == len(resolver.resolve("."))
 
-    def test_nonexistent_returns_empty(self, resolver):
+    def test_nonexistent_returns_empty(self, resolver: PlaceResolver) -> None:
         assert resolver.resolve("nowhere.yml") == []
 
 
@@ -2158,25 +2197,25 @@ class TestResolve:
 
 
 class TestGeojsonUrl:
-    def test_yml_to_geojson_url(self, tmp_path):
+    def test_yml_to_geojson_url(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         path = root / "japan" / "tokyo.yml"
         url = _geojson_url(path, root, "/static")
         assert url == "/static/places/japan/tokyo.geojson"
 
-    def test_yaml_extension(self, tmp_path):
+    def test_yaml_extension(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         path = root / "japan" / "mygo.yaml"
         url = _geojson_url(path, root, "/static")
         assert url == "/static/places/japan/mygo.geojson"
 
-    def test_custom_static_prefix(self, tmp_path):
+    def test_custom_static_prefix(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         path = root / "taiwan.yml"
         url = _geojson_url(path, root, "/assets")
         assert url == "/assets/places/taiwan.geojson"
 
-    def test_trailing_slash_stripped(self, tmp_path):
+    def test_trailing_slash_stripped(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         path = root / "taiwan.yml"
         url = _geojson_url(path, root, "/static/")
@@ -2189,10 +2228,10 @@ class TestGeojsonUrl:
 
 
 class TestRenderPlaceHtml:
-    def _entry(self, url, fragment=None):
+    def _entry(self, url: str, fragment: str | None = None) -> dict[str, Any]:
         return {"url": url, "fragment": fragment}
 
-    def test_returns_map_block(self):
+    def test_returns_map_block(self) -> None:
         html = _render_place_html(
             [self._entry("/static/places/a.geojson")], ["A"], "400px", TILE, ATTR
         )
@@ -2200,14 +2239,14 @@ class TestRenderPlaceHtml:
         assert 'class="osm-map"' in html
         assert 'class="osm-map-caption"' in html
 
-    def test_data_geojson_attribute_contains_url(self):
+    def test_data_geojson_attribute_contains_url(self) -> None:
         html = _render_place_html(
             [self._entry("/static/places/a.geojson")], ["A"], "400px", TILE, ATTR
         )
         assert "data-geojson=" in html
         assert "/static/places/a.geojson" in html
 
-    def test_fragment_included_in_data_geojson(self):
+    def test_fragment_included_in_data_geojson(self) -> None:
         html = _render_place_html(
             [self._entry("/static/places/a.geojson", "上野公園")],
             ["上野公園"],
@@ -2217,29 +2256,29 @@ class TestRenderPlaceHtml:
         )
         assert "上野公園" in html
 
-    def test_null_fragment_included(self):
+    def test_null_fragment_included(self) -> None:
         html = _render_place_html(
             [self._entry("/static/places/a.geojson", None)], ["A"], "400px", TILE, ATTR
         )
         assert "null" in html  # JSON null for no fragment
 
-    def test_multiple_entries(self):
+    def test_multiple_entries(self) -> None:
         entries = [self._entry("/a.geojson"), self._entry("/b.geojson")]
         html = _render_place_html(entries, ["A", "B"], "400px", TILE, ATTR)
         assert "a.geojson" in html
         assert "b.geojson" in html
 
-    def test_empty_entries_returns_comment(self):
+    def test_empty_entries_returns_comment(self) -> None:
         html = _render_place_html([], [], "400px", TILE, ATTR)
         assert "pelican-osm: no valid places" in html
 
-    def test_caption_few_names(self):
+    def test_caption_few_names(self) -> None:
         html = _render_place_html(
             [self._entry("/u.geojson")], ["A", "B"], "400px", TILE, ATTR
         )
         assert "A, B" in html
 
-    def test_caption_many_names(self):
+    def test_caption_many_names(self) -> None:
         names = ["A", "B", "C", "D", "E"]
         html = _render_place_html(
             [self._entry("/u.geojson")], names, "400px", TILE, ATTR
@@ -2247,7 +2286,7 @@ class TestRenderPlaceHtml:
         assert "A, B, C" in html
         assert "and 2 more" in html
 
-    def test_attribution_with_quotes_is_escaped(self):
+    def test_attribution_with_quotes_is_escaped(self) -> None:
         attr = '&copy; <a href="https://example.com">OSM</a>'
         html = _render_place_html(
             [self._entry("/u.geojson")], ["A"], "400px", TILE, attr
@@ -2255,24 +2294,24 @@ class TestRenderPlaceHtml:
         m = re.search(r'data-attribution="([^"]*)"', html)
         assert m is not None
 
-    def test_map_height_css_var(self):
+    def test_map_height_css_var(self) -> None:
         html = _render_place_html(
             [self._entry("/u.geojson")], ["A"], "600px", TILE, ATTR
         )
         assert "--osm-map-height:600px" in html
 
-    def test_unique_map_ids(self):
+    def test_unique_map_ids(self) -> None:
         html1 = _render_place_html(
             [self._entry("/u.geojson")], ["A"], "400px", TILE, ATTR
         )
         html2 = _render_place_html(
             [self._entry("/u.geojson")], ["A"], "400px", TILE, ATTR
         )
-        id1 = re.search(r'id="(osm-map-\d+)"', html1).group(1)
-        id2 = re.search(r'id="(osm-map-\d+)"', html2).group(1)
+        id1 = _must_search(r'id="(osm-map-\d+)"', html1).group(1)
+        id2 = _must_search(r'id="(osm-map-\d+)"', html2).group(1)
         assert id1 != id2
 
-    def test_field_labels_attribute_emitted_when_set(self):
+    def test_field_labels_attribute_emitted_when_set(self) -> None:
         html = _render_place_html(
             [self._entry("/u.geojson")],
             ["A"],
@@ -2286,7 +2325,7 @@ class TestRenderPlaceHtml:
         payload = json.loads(m.group(1).replace("&quot;", '"').replace("&amp;", "&"))
         assert payload == {"date": "日期", "category": "分類"}
 
-    def test_field_labels_attribute_omitted_when_empty(self):
+    def test_field_labels_attribute_omitted_when_empty(self) -> None:
         html = _render_place_html(
             [self._entry("/u.geojson")], ["A"], "400px", TILE, ATTR
         )
@@ -2299,20 +2338,22 @@ class TestRenderPlaceHtml:
 
 
 class TestProcessContent:
-    def test_single_file_shortcode(self, resolver, places_root):
+    def test_single_file_shortcode(
+        self, resolver: PlaceResolver, places_root: Path
+    ) -> None:
         content = "{% place japan/tamako.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "osm-map-block" in result
         assert "tamako.geojson" in result
 
-    def test_directory_shortcode(self, resolver):
+    def test_directory_shortcode(self, resolver: PlaceResolver) -> None:
         content = "{% place japan %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "osm-map-block" in result
         assert "mygo.geojson" in result
         assert "tamako.geojson" in result
 
-    def test_comma_separated_specs_single_map(self, resolver):
+    def test_comma_separated_specs_single_map(self, resolver: PlaceResolver) -> None:
         content = "{% place japan/tamako.yml, taiwan.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         # Only one map block
@@ -2320,49 +2361,53 @@ class TestProcessContent:
         assert "tamako.geojson" in result
         assert "taiwan.geojson" in result
 
-    def test_multiple_shortcodes_separate_maps(self, resolver):
+    def test_multiple_shortcodes_separate_maps(self, resolver: PlaceResolver) -> None:
         content = "{% place japan/tamako.yml %}\n{% place taiwan.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert result.count("osm-map-block") == 2
 
-    def test_custom_shortcode_name(self, resolver):
+    def test_custom_shortcode_name(self, resolver: PlaceResolver) -> None:
         settings = {**DEFAULT_SETTINGS, "OSM_SHORTCODE": "map"}
         result = _process_content("{% map japan/tamako.yml %}", resolver, settings)
         assert "osm-map-block" in result
 
-    def test_default_shortcode_not_matched_with_custom(self, resolver):
+    def test_default_shortcode_not_matched_with_custom(
+        self, resolver: PlaceResolver
+    ) -> None:
         settings = {**DEFAULT_SETTINGS, "OSM_SHORTCODE": "map"}
         result = _process_content("{% place japan/tamako.yml %}", resolver, settings)
         assert "osm-map-block" not in result
 
-    def test_no_shortcode_unchanged(self, resolver):
+    def test_no_shortcode_unchanged(self, resolver: PlaceResolver) -> None:
         content = "Just plain text."
         assert _process_content(content, resolver, DEFAULT_SETTINGS) == content
 
-    def test_surrounding_content_preserved(self, resolver):
+    def test_surrounding_content_preserved(self, resolver: PlaceResolver) -> None:
         content = "Before\n{% place japan/tamako.yml %}\nAfter"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert result.startswith("Before\n")
         assert result.endswith("\nAfter")
 
-    def test_names_in_caption(self, resolver):
+    def test_names_in_caption(self, resolver: PlaceResolver) -> None:
         content = "{% place japan/tamako.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "出町桝形商店街" in result
         assert "鴨川デルタ" in result
 
-    def test_static_prefix_in_url(self, resolver):
+    def test_static_prefix_in_url(self, resolver: PlaceResolver) -> None:
         settings = {**DEFAULT_SETTINGS, "OSM_STATIC_PREFIX": "/assets"}
         result = _process_content("{% place japan/tamako.yml %}", resolver, settings)
         assert "/assets/places/japan/tamako.geojson" in result
 
-    def test_deduplication_of_urls(self, resolver):
+    def test_deduplication_of_urls(self, resolver: PlaceResolver) -> None:
         # Same file listed twice should produce only one URL
         content = "{% place japan/tamako.yml, japan/tamako.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert result.count("tamako.geojson") == 1
 
-    def test_fragment_passed_through_to_data_geojson(self, resolver):
+    def test_fragment_passed_through_to_data_geojson(
+        self, resolver: PlaceResolver
+    ) -> None:
         content = "{% place japan/tamako.yml#出町桝形商店街 %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         m = re.search(r'data-geojson="([^"]*)"', result)
@@ -2371,20 +2416,20 @@ class TestProcessContent:
         entries = json.loads(decoded)
         assert entries[0]["fragment"] == "出町桝形商店街"
 
-    def test_fragment_filters_caption_names(self, resolver):
+    def test_fragment_filters_caption_names(self, resolver: PlaceResolver) -> None:
         # Caption should only show the matched place, not all places in the file
         content = "{% place japan/tamako.yml#出町桝形商店街 %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "出町桝形商店街" in result
         assert "鴨川デルタ" not in result
 
-    def test_no_fragment_shows_all_names(self, resolver):
+    def test_no_fragment_shows_all_names(self, resolver: PlaceResolver) -> None:
         content = "{% place japan/tamako.yml %}"
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "出町桝形商店街" in result
         assert "鴨川デルタ" in result
 
-    def test_unknown_kwargs_do_not_break_parsing(self, resolver):
+    def test_unknown_kwargs_do_not_break_parsing(self, resolver: PlaceResolver) -> None:
         # Forward-compat: kwargs that the current shortcode doesn't consume
         # should still parse without breaking the legacy positional spec.
         content = '{% place japan/tamako.yml future_kwarg="x,y" %}'
@@ -2393,7 +2438,9 @@ class TestProcessContent:
 
     # ── place_list grouping/aggregation kwargs ────────────────────────────
 
-    def test_place_list_group_by_no_aggregate_preserves_rows(self, resolver):
+    def test_place_list_group_by_no_aggregate_preserves_rows(
+        self, resolver: PlaceResolver
+    ) -> None:
         # Directory shortcode loads mygo (1 place) and tamako (2 places).
         # group_by without aggregate buckets but does NOT merge: all 3 rows
         # survive, just contiguous per anime.
@@ -2404,7 +2451,9 @@ class TestProcessContent:
         assert tbody is not None
         assert tbody.group(1).count("<tr") == 3
 
-    def test_place_list_group_summary_emits_header(self, resolver):
+    def test_place_list_group_summary_emits_header(
+        self, resolver: PlaceResolver
+    ) -> None:
         content = '{% place_list japan group_by="anime" group_summary_at="anime" %}'
         result = _process_content(content, resolver, DEFAULT_SETTINGS)
         assert "osm-group-header" in result
@@ -2412,7 +2461,9 @@ class TestProcessContent:
         assert "玉子市場" in result
         assert "MyGO" in result
 
-    def test_place_list_group_count_template_setting(self, resolver):
+    def test_place_list_group_count_template_setting(
+        self, resolver: PlaceResolver
+    ) -> None:
         settings = {
             **DEFAULT_SETTINGS,
             "OSM_LIST_GROUP_COUNT_TEMPLATE": "{n} 個地點",
@@ -2422,7 +2473,9 @@ class TestProcessContent:
         assert "個地點" in result
         assert ">1 places<" not in result
 
-    def test_place_list_aggregate_year_renders_year_string(self, tmp_path: Path):
+    def test_place_list_aggregate_year_renders_year_string(
+        self, tmp_path: Path
+    ) -> None:
         # Build a fixture with two same-anime places in different years.
         root = tmp_path / "places"
         root.mkdir()
@@ -2444,26 +2497,26 @@ class TestProcessContent:
 
 
 class TestPlaceToFeature:
-    def test_basic_structure(self):
+    def test_basic_structure(self) -> None:
         feature = _place_to_feature({"name": "A", "lat": 35.7, "lon": 139.7})
         assert feature["type"] == "Feature"
         assert feature["geometry"]["type"] == "Point"
         assert feature["geometry"]["coordinates"] == [139.7, 35.7]  # [lon, lat]
         assert feature["properties"]["name"] == "A"
 
-    def test_lat_lon_not_in_properties(self):
+    def test_lat_lon_not_in_properties(self) -> None:
         feature = _place_to_feature({"name": "A", "lat": 1.0, "lon": 2.0})
         assert "lat" not in feature["properties"]
         assert "lon" not in feature["properties"]
 
-    def test_extra_fields_in_properties(self):
+    def test_extra_fields_in_properties(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "anime": "MyGO", "category": "公園"}
         )
         assert feature["properties"]["anime"] == "MyGO"
         assert feature["properties"]["category"] == "公園"
 
-    def test_date_object_serialised_to_iso(self):
+    def test_date_object_serialised_to_iso(self) -> None:
         import datetime
 
         feature = _place_to_feature(
@@ -2471,56 +2524,56 @@ class TestPlaceToFeature:
         )
         assert feature["properties"]["date"] == "2026-02-22"
 
-    def test_empty_string_stripped(self):
+    def test_empty_string_stripped(self) -> None:
         feature = _place_to_feature({"name": "A", "lat": 1.0, "lon": 2.0, "notes": ""})
         assert "notes" not in feature["properties"]
 
-    def test_empty_list_stripped(self):
+    def test_empty_list_stripped(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "tags": [], "photos": []}
         )
         assert "tags" not in feature["properties"]
         assert "photos" not in feature["properties"]
 
-    def test_none_stripped(self):
+    def test_none_stripped(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "extra": None}
         )
         assert "extra" not in feature["properties"]
 
-    def test_nonempty_list_kept(self):
+    def test_nonempty_list_kept(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "tags": ["已歇業"]}
         )
         assert feature["properties"]["tags"] == ["已歇業"]
 
-    def test_per_place_icon_override(self):
+    def test_per_place_icon_override(self) -> None:
         feature = _place_to_feature({"name": "A", "lat": 1.0, "lon": 2.0, "icon": "🎪"})
         assert feature["properties"]["_osm_icon"] == "🎪"
         assert "icon" not in feature["properties"]
 
-    def test_schema_derived_icon(self):
+    def test_schema_derived_icon(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "category": "ramen"},
             field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
         )
         assert feature["properties"]["_osm_icon"] == "🍜"
 
-    def test_category_value_not_in_icon_map(self):
+    def test_category_value_not_in_icon_map(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "category": "sushi"},
             field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
         )
         assert "_osm_icon" not in feature["properties"]
 
-    def test_place_missing_category_field_no_crash(self):
+    def test_place_missing_category_field_no_crash(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0},
             field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
         )
         assert "_osm_icon" not in feature["properties"]
 
-    def test_per_place_icon_wins_over_schema(self):
+    def test_per_place_icon_wins_over_schema(self) -> None:
         feature = _place_to_feature(
             {"name": "A", "lat": 1.0, "lon": 2.0, "icon": "🎪", "category": "ramen"},
             field_schema={"category": {"x-osm-icon": {"ramen": "🍜"}}},
@@ -2534,17 +2587,17 @@ class TestPlaceToFeature:
 
 
 class TestYamlToGeojson:
-    def test_feature_collection_structure(self, places_root):
+    def test_feature_collection_structure(self, places_root: Path) -> None:
         fc = _yaml_to_geojson(places_root / "japan" / "tamako.yml")
         assert fc["type"] == "FeatureCollection"
         assert len(fc["features"]) == 2
 
-    def test_file_metadata_in_properties(self, places_root):
+    def test_file_metadata_in_properties(self, places_root: Path) -> None:
         fc = _yaml_to_geojson(places_root / "japan" / "tamako.yml")
         for f in fc["features"]:
             assert f["properties"]["anime"] == "玉子市場"
 
-    def test_invalid_places_excluded(self, tmp_path):
+    def test_invalid_places_excluded(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "locations:\n"
@@ -2556,7 +2609,7 @@ class TestYamlToGeojson:
         assert len(fc["features"]) == 1
         assert fc["features"][0]["properties"]["name"] == "Valid"
 
-    def test_osm_type_and_id_survive_yaml_to_geojson(self, tmp_path):
+    def test_osm_type_and_id_survive_yaml_to_geojson(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "locations:\n"
@@ -2569,7 +2622,7 @@ class TestYamlToGeojson:
         assert props["osm_type"] == "relation"
         assert props["osm_id"] == 789
 
-    def test_list_of_dates_serialized_to_strings(self, tmp_path):
+    def test_list_of_dates_serialized_to_strings(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "locations:\n"
@@ -2585,7 +2638,7 @@ class TestYamlToGeojson:
         assert "2026-02-22" in serialized
         assert "2026-03-15" in serialized
 
-    def test_field_schema_propagates_to_icon(self, tmp_path):
+    def test_field_schema_propagates_to_icon(self, tmp_path: Path) -> None:
         yml = tmp_path / "test.yml"
         yml.write_text(
             "locations:\n"
@@ -2605,7 +2658,7 @@ class TestYamlToGeojson:
 
 
 class TestExportGeojson:
-    def test_geojson_files_created(self, places_root, tmp_path):
+    def test_geojson_files_created(self, places_root: Path, tmp_path: Path) -> None:
         output = tmp_path / "output"
         output.mkdir()
 
@@ -2616,7 +2669,7 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
@@ -2630,7 +2683,7 @@ class TestExportGeojson:
         assert (output / "static" / "places" / "taiwan.geojson").exists()
         assert (output / "static" / "places" / "bare.geojson").exists()
 
-    def test_geojson_content_is_valid(self, places_root, tmp_path):
+    def test_geojson_content_is_valid(self, places_root: Path, tmp_path: Path) -> None:
         output = tmp_path / "output"
         output.mkdir()
 
@@ -2641,7 +2694,7 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
@@ -2656,7 +2709,9 @@ class TestExportGeojson:
         names = {f["properties"]["name"] for f in fc["features"]}
         assert names == {"出町桝形商店街", "鴨川デルタ"}
 
-    def test_geojson_mirrors_yaml_directory_structure(self, places_root, tmp_path):
+    def test_geojson_mirrors_yaml_directory_structure(
+        self, places_root: Path, tmp_path: Path
+    ) -> None:
         output = tmp_path / "output"
         output.mkdir()
 
@@ -2667,7 +2722,7 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
@@ -2679,7 +2734,7 @@ class TestExportGeojson:
         assert (output / "static" / "places" / "japan" / "mygo.geojson").exists()
         assert not (output / "static" / "places" / "japan" / "mygo.yaml").exists()
 
-    def test_schema_x_osm_icon_resolved_into_geojson(self, tmp_path):
+    def test_schema_x_osm_icon_resolved_into_geojson(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_schema.yaml").write_text(
@@ -2722,7 +2777,7 @@ class TestExportGeojson:
         osm_mod._settings = {}
 
         class FakePelican:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
@@ -2739,7 +2794,9 @@ class TestExportGeojson:
         # Category not present in the map → no icon, no crash.
         assert "_osm_icon" not in by_name["B"]
 
-    def test_schema_cache_loads_shared_schema_once(self, tmp_path, monkeypatch):
+    def test_schema_cache_loads_shared_schema_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_schema.yaml").write_text(
@@ -2795,15 +2852,15 @@ class TestExportGeojson:
         orig_safe_load = yaml.safe_load
         call_count = {"n": 0}
 
-        def counting_safe_load(stream):
+        def counting_safe_load(stream: Any) -> Any:
             if getattr(stream, "name", None) == str(schema_path):
                 call_count["n"] += 1
             return orig_safe_load(stream)
 
-        monkeypatch.setattr(osm_mod.yaml, "safe_load", counting_safe_load)
+        monkeypatch.setattr(yaml, "safe_load", counting_safe_load)
 
         class FakePelican:
-            def __init__(self):
+            def __init__(self) -> None:
                 self.settings = {"OUTPUT_PATH": str(output)}
 
         try:
@@ -2847,21 +2904,21 @@ PLACE_SCHEMA = {
 
 
 class TestIsPlaceYaml:
-    def test_regular_yaml(self, tmp_path):
+    def test_regular_yaml(self, tmp_path: Path) -> None:
         assert _is_place_yaml(tmp_path / "foo.yaml") is True
         assert _is_place_yaml(tmp_path / "foo.yml") is True
 
-    def test_underscore_prefix_excluded(self, tmp_path):
+    def test_underscore_prefix_excluded(self, tmp_path: Path) -> None:
         assert _is_place_yaml(tmp_path / "_schema.yaml") is False
         assert _is_place_yaml(tmp_path / "_private.yml") is False
 
-    def test_non_yaml_excluded(self, tmp_path):
+    def test_non_yaml_excluded(self, tmp_path: Path) -> None:
         assert _is_place_yaml(tmp_path / "foo.json") is False
         assert _is_place_yaml(tmp_path / "foo.txt") is False
 
 
 class TestFindSchemaFor:
-    def test_sibling_schema_found(self, tmp_path):
+    def test_sibling_schema_found(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_schema.yaml").write_text("type: object\n")
@@ -2871,7 +2928,7 @@ class TestFindSchemaFor:
         result = _find_schema_for(yaml_file, root, ["_schema.yaml"])
         assert result == (root / "_schema.yaml").resolve()
 
-    def test_ancestor_schema_found(self, tmp_path):
+    def test_ancestor_schema_found(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         sub = root / "japan"
         sub.mkdir(parents=True)
@@ -2882,7 +2939,7 @@ class TestFindSchemaFor:
         result = _find_schema_for(yaml_file, root, ["_schema.yaml"])
         assert result == (root / "_schema.yaml").resolve()
 
-    def test_nearest_ancestor_wins(self, tmp_path):
+    def test_nearest_ancestor_wins(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         sub = root / "japan"
         sub.mkdir(parents=True)
@@ -2893,7 +2950,7 @@ class TestFindSchemaFor:
         result = _find_schema_for(yaml_file, root, ["_schema.yaml"])
         assert result == (sub / "_schema.yaml").resolve()
 
-    def test_no_schema_returns_none(self, tmp_path):
+    def test_no_schema_returns_none(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         root.mkdir()
         yaml_file = root / "foo.yaml"
@@ -2901,7 +2958,7 @@ class TestFindSchemaFor:
 
         assert _find_schema_for(yaml_file, root, ["_schema.yaml"]) is None
 
-    def test_multiple_filenames_first_match_wins(self, tmp_path):
+    def test_multiple_filenames_first_match_wins(self, tmp_path: Path) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_schema.json").write_text('{"type": "object"}\n')
@@ -2915,20 +2972,24 @@ class TestFindSchemaFor:
 
 class TestValidateYamlFiles:
     @pytest.fixture()
-    def schema_root(self, tmp_path):
+    def schema_root(self, tmp_path: Path) -> Path:
         root = tmp_path / "places"
         sub = root / "pilgrimage"
         sub.mkdir(parents=True)
         (sub / "_schema.yaml").write_text(yaml.dump(PLACE_SCHEMA), encoding="utf-8")
         return root
 
-    def test_no_schema_no_validation(self, places_root, caplog):
+    def test_no_schema_no_validation(
+        self, places_root: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         # places_root fixture has no schema files
         with caplog.at_level("WARNING"):
             _validate_yaml_files(places_root, {})
         assert not any("schema validation" in r.message for r in caplog.records)
 
-    def test_valid_file_no_errors(self, schema_root, caplog):
+    def test_valid_file_no_errors(
+        self, schema_root: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         sub = schema_root / "pilgrimage"
         (sub / "valid.yaml").write_text(
             yaml.dump(
@@ -2948,7 +3009,9 @@ class TestValidateYamlFiles:
 
         assert not any("schema validation" in r.message for r in caplog.records)
 
-    def test_invalid_file_logs_warning(self, schema_root, caplog):
+    def test_invalid_file_logs_warning(
+        self, schema_root: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         sub = schema_root / "pilgrimage"
         (sub / "invalid.yaml").write_text(
             yaml.dump(
@@ -2968,7 +3031,9 @@ class TestValidateYamlFiles:
 
         assert any("schema validation" in r.message for r in caplog.records)
 
-    def test_missing_required_top_level_key(self, schema_root, caplog):
+    def test_missing_required_top_level_key(
+        self, schema_root: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         sub = schema_root / "pilgrimage"
         (sub / "noanime.yaml").write_text(
             yaml.dump({"locations": [{"name": "A", "lat": 1.0, "lon": 2.0}]}),
@@ -2980,7 +3045,9 @@ class TestValidateYamlFiles:
 
         assert any("anime" in r.message for r in caplog.records)
 
-    def test_unquoted_date_does_not_break_validation(self, schema_root, caplog):
+    def test_unquoted_date_does_not_break_validation(
+        self, schema_root: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         # PyYAML parses `2026-01-01` as datetime.date — coercion should normalize it
         sub = schema_root / "pilgrimage"
         (sub / "datey.yaml").write_text(
@@ -2998,7 +3065,7 @@ class TestValidateYamlFiles:
 
         assert not any("schema validation" in r.message for r in caplog.records)
 
-    def test_strict_mode_raises(self, schema_root):
+    def test_strict_mode_raises(self, schema_root: Path) -> None:
         sub = schema_root / "pilgrimage"
         (sub / "bad.yaml").write_text(
             yaml.dump({"anime": "T", "locations": [{"lat": 1.0, "lon": 2.0}]}),
@@ -3008,7 +3075,7 @@ class TestValidateYamlFiles:
         with pytest.raises(RuntimeError, match="schema validation error"):
             _validate_yaml_files(schema_root, {"OSM_VALIDATE_STRICT": True})
 
-    def test_schema_file_not_loaded_as_place(self, schema_root):
+    def test_schema_file_not_loaded_as_place(self, schema_root: Path) -> None:
         sub = schema_root / "pilgrimage"
         (sub / "valid.yaml").write_text(
             yaml.dump(
@@ -3024,7 +3091,9 @@ class TestValidateYamlFiles:
         assert all(not p.name.startswith("_") for p in paths)
         assert sub / "_schema.yaml" not in paths
 
-    def test_custom_schema_filename(self, tmp_path, caplog):
+    def test_custom_schema_filename(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "schema.yaml").write_text(yaml.dump(PLACE_SCHEMA), encoding="utf-8")
@@ -3038,7 +3107,9 @@ class TestValidateYamlFiles:
 
         assert any("schema validation" in r.message for r in caplog.records)
 
-    def test_invalid_schema_logs_error(self, tmp_path, caplog):
+    def test_invalid_schema_logs_error(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         root = tmp_path / "places"
         root.mkdir()
         # `type` must be a string or list of strings — number is invalid
@@ -3063,7 +3134,9 @@ class TestValidateYamlFiles:
     # relative refs to sibling files. `_build_schema_validator` wires this
     # up; these tests exercise the resulting validator end to end.
 
-    def test_cross_file_ref_valid_data_passes(self, tmp_path, caplog):
+    def test_cross_file_ref_valid_data_passes(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_common.yaml").write_text(
@@ -3104,7 +3177,9 @@ class TestValidateYamlFiles:
         assert not any("schema validation" in r.message for r in caplog.records)
         assert not any("cannot resolve $ref" in r.message for r in caplog.records)
 
-    def test_cross_file_ref_invalid_data_fails(self, tmp_path, caplog):
+    def test_cross_file_ref_invalid_data_fails(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_common.yaml").write_text(
@@ -3147,7 +3222,9 @@ class TestValidateYamlFiles:
         assert any("schema validation" in r.message for r in caplog.records)
         assert any("name" in r.message for r in caplog.records)
 
-    def test_ref_to_missing_file_logs_and_does_not_crash(self, tmp_path, caplog):
+    def test_ref_to_missing_file_logs_and_does_not_crash(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_schema.yaml").write_text(
@@ -3173,14 +3250,16 @@ class TestResolveSchemaProperties:
     """Schema property resolution must reach into all three loader shapes,
     not just the canonical place dict with nested ``items``."""
 
-    def _setup(self, tmp_path: Path, yaml_name: str, schema: dict) -> Path:
+    def _setup(self, tmp_path: Path, yaml_name: str, schema: dict[str, Any]) -> Path:
         root = tmp_path / "places"
         root.mkdir()
         (root / "_schema.yaml").write_text(yaml.dump(schema), encoding="utf-8")
         (root / yaml_name).write_text("name: A\nlat: 1\nlon: 2\n", encoding="utf-8")
         return root
 
-    def test_locations_based_schema_extracts_per_place_props(self, tmp_path):
+    def test_locations_based_schema_extracts_per_place_props(
+        self, tmp_path: Path
+    ) -> None:
         # Pilgrimage shape: {properties: {locations: {items: {properties: ...}}}}
         schema = {
             "type": "object",
@@ -3214,7 +3293,9 @@ class TestResolveSchemaProperties:
         assert merged["date"]["x-osm-list-sort"] == "max"
         assert merged["anime"]["title"] == "作品"
 
-    def test_dict_of_places_schema_extracts_per_place_props(self, tmp_path):
+    def test_dict_of_places_schema_extracts_per_place_props(
+        self, tmp_path: Path
+    ) -> None:
         # Theater shape:
         # {additionalProperties: {properties: ..., items: {items: {...}}}}
         schema = {
@@ -3252,7 +3333,7 @@ class TestResolveSchemaProperties:
         assert merged["hall"]["title"] == "影廳"
         assert merged["alt_rows"]["x-osm-list-hidden"] is True
 
-    def test_inner_props_win_over_outer_on_collision(self, tmp_path):
+    def test_inner_props_win_over_outer_on_collision(self, tmp_path: Path) -> None:
         # Item-level entries should override parent-level entries with the
         # same name, matching _expand_items row-merge precedence.
         schema = {
@@ -3276,7 +3357,7 @@ class TestResolveSchemaProperties:
 
         assert merged["tags"]["title"] == "PLACE TAGS"
 
-    def test_cross_file_ref_end_to_end(self, tmp_path):
+    def test_cross_file_ref_end_to_end(self, tmp_path: Path) -> None:
         """Full render-time path: a real `_common.yaml` + a real `_schema.yaml`
         that `$ref`s it, resolved via `_resolve_schema_properties`."""
         root = tmp_path / "places"
@@ -3330,38 +3411,38 @@ class TestResolveSchemaProperties:
 
 
 class TestResolveI18nTitle:
-    def test_returns_full_lang_match(self):
+    def test_returns_full_lang_match(self) -> None:
         props = {"x-osm-list-i18n": {"title": {"en": "Hall", "ja": "スクリーン"}}}
         assert _resolve_i18n_title(props, "en") == "Hall"
         assert _resolve_i18n_title(props, "ja") == "スクリーン"
 
-    def test_falls_back_to_primary_subtag(self):
+    def test_falls_back_to_primary_subtag(self) -> None:
         # Schema has only primary "zh"; lookup with "zh-tw" should match.
         props = {"x-osm-list-i18n": {"title": {"zh": "影廳"}}}
         assert _resolve_i18n_title(props, "zh-tw") == "影廳"
 
-    def test_full_match_wins_over_primary_subtag(self):
+    def test_full_match_wins_over_primary_subtag(self) -> None:
         props = {"x-osm-list-i18n": {"title": {"zh": "影廳", "zh-tw": "影廳-TW"}}}
         assert _resolve_i18n_title(props, "zh-tw") == "影廳-TW"
 
-    def test_case_insensitive_lookup(self):
+    def test_case_insensitive_lookup(self) -> None:
         props = {"x-osm-list-i18n": {"title": {"EN": "Hall"}}}
         assert _resolve_i18n_title(props, "en") == "Hall"
 
-    def test_no_match_returns_none(self):
+    def test_no_match_returns_none(self) -> None:
         props = {"x-osm-list-i18n": {"title": {"en": "Hall"}}}
         assert _resolve_i18n_title(props, "fr") is None
 
-    def test_no_lang_returns_none(self):
+    def test_no_lang_returns_none(self) -> None:
         props = {"x-osm-list-i18n": {"title": {"en": "Hall"}}}
         assert _resolve_i18n_title(props, None) is None
 
-    def test_no_i18n_block_returns_none(self):
+    def test_no_i18n_block_returns_none(self) -> None:
         assert _resolve_i18n_title({"title": "Hall"}, "en") is None
 
 
 class TestBuildPopupFieldLabels:
-    def test_uses_localized_title_when_present(self):
+    def test_uses_localized_title_when_present(self) -> None:
         schema = {
             "date": {
                 "title": "Date",
@@ -3372,32 +3453,32 @@ class TestBuildPopupFieldLabels:
         labels = _build_popup_field_labels(schema, "zh-tw")
         assert labels == {"date": "日期", "category": "Category"}
 
-    def test_falls_back_to_plain_title_when_no_locale_match(self):
+    def test_falls_back_to_plain_title_when_no_locale_match(self) -> None:
         schema = {"date": {"title": "Date"}}
         labels = _build_popup_field_labels(schema, "fr")
         assert labels == {"date": "Date"}
 
-    def test_omits_fields_without_any_title(self):
+    def test_omits_fields_without_any_title(self) -> None:
         # No title and no i18n → JS derives the label, so we don't bake
         # anything into the data attribute.
         schema = {"date": {"x-osm-list-sort": "min"}}
         labels = _build_popup_field_labels(schema, "en")
         assert labels == {}
 
-    def test_skips_non_dict_props(self):
+    def test_skips_non_dict_props(self) -> None:
         schema = {"date": "not-a-dict", "category": {"title": "Category"}}
         labels = _build_popup_field_labels(schema, "en")
         assert labels == {"category": "Category"}
 
 
 class TestResolveGroupCountTemplate:
-    def test_explicit_setting_wins(self):
+    def test_explicit_setting_wins(self) -> None:
         out = _resolve_group_count_template(
             {"OSM_LIST_GROUP_COUNT_TEMPLATE": "{n} spots"}, "zh-tw"
         )
         assert out == "{n} spots"
 
-    def test_explicit_empty_string_wins_to_suppress(self):
+    def test_explicit_empty_string_wins_to_suppress(self) -> None:
         # Setting to "" is the documented way to suppress the count line —
         # built-in lang defaults must not override that intent.
         out = _resolve_group_count_template(
@@ -3405,24 +3486,24 @@ class TestResolveGroupCountTemplate:
         )
         assert out == ""
 
-    def test_zh_tw_uses_zh_builtin(self):
+    def test_zh_tw_uses_zh_builtin(self) -> None:
         assert _resolve_group_count_template({}, "zh-tw") == "{n} 個地點"
 
-    def test_zh_uses_zh_builtin(self):
+    def test_zh_uses_zh_builtin(self) -> None:
         assert _resolve_group_count_template({}, "zh") == "{n} 個地點"
 
-    def test_ja_uses_ja_builtin(self):
+    def test_ja_uses_ja_builtin(self) -> None:
         assert _resolve_group_count_template({}, "ja") == "{n} 件"
 
-    def test_unknown_lang_falls_back_to_english(self):
+    def test_unknown_lang_falls_back_to_english(self) -> None:
         assert _resolve_group_count_template({}, "fr") == "{n} places"
 
-    def test_no_lang_falls_back_to_english(self):
+    def test_no_lang_falls_back_to_english(self) -> None:
         assert _resolve_group_count_template({}, None) == "{n} places"
 
 
 class TestRenderPlaceListI18nColumnHeader:
-    def test_lang_match_overrides_title(self):
+    def test_lang_match_overrides_title(self) -> None:
         places = [{"name": "A", "lat": 1, "lon": 2, "category": "park"}]
         html = _render_place_list_html(
             places,
@@ -3439,7 +3520,7 @@ class TestRenderPlaceListI18nColumnHeader:
         assert "<th>Category</th>" in html
         assert "<th>分類</th>" not in html
 
-    def test_no_lang_match_falls_back_to_title(self):
+    def test_no_lang_match_falls_back_to_title(self) -> None:
         places = [{"name": "A", "lat": 1, "lon": 2, "category": "park"}]
         html = _render_place_list_html(
             places,
@@ -3455,7 +3536,7 @@ class TestRenderPlaceListI18nColumnHeader:
         )
         assert "<th>分類</th>" in html
 
-    def test_primary_subtag_match(self):
+    def test_primary_subtag_match(self) -> None:
         places = [{"name": "A", "lat": 1, "lon": 2, "category": "park"}]
         html = _render_place_list_html(
             places,
@@ -3486,13 +3567,13 @@ class TestShortcodePreserveExtension:
     def _convert(self, source: str, *, with_extra: bool = True) -> str:
         import markdown
 
-        extensions: list = [_ShortcodePreserveExtension(["place", "place_list"])]
+        extensions: list[Any] = [_ShortcodePreserveExtension(["place", "place_list"])]
         if with_extra:
             extensions.append("markdown.extensions.extra")
         md = markdown.Markdown(extensions=extensions, output_format="html")
         return md.convert(source)
 
-    def test_shortcode_survives_attr_list(self):
+    def test_shortcode_survives_attr_list(self) -> None:
         # Two adjacent shortcodes (no blank line) used to get the second
         # consumed by attr_list as paragraph attributes.
         source = "{% place_list theaters/japan.yaml %}\n{% place theaters/japan.yaml %}"
@@ -3503,7 +3584,7 @@ class TestShortcodePreserveExtension:
         assert 'place=""' not in out
         assert "theaters=" not in out
 
-    def test_shortcode_after_heading_no_blank_line(self):
+    def test_shortcode_after_heading_no_blank_line(self) -> None:
         # Heading immediately followed by a shortcode line previously got
         # the whole block wrapped in HTML comments. Verify the shortcode
         # text comes through verbatim.
@@ -3518,7 +3599,7 @@ class TestShortcodePreserveExtension:
         # No HTML-comment wrapping of plugin output
         assert "<!--" not in out
 
-    def test_shortcode_with_kwargs_preserved(self):
+    def test_shortcode_with_kwargs_preserved(self) -> None:
         source = (
             "{% place_list theaters/japan.yaml "
             'group_by="country,city" group_summary_at="country" %}'
@@ -3529,14 +3610,14 @@ class TestShortcodePreserveExtension:
             'group_by="country,city" group_summary_at="country" %}'
         ) in out
 
-    def test_works_without_extra(self):
+    def test_works_without_extra(self) -> None:
         # Sanity: even without the troublesome extension, the shortcode
         # should still pass through unchanged (no double-substitution etc.).
         source = "{% place taiwan.yaml %}"
         out = self._convert(source, with_extra=False)
         assert "{% place taiwan.yaml %}" in out
 
-    def test_custom_shortcode_names(self):
+    def test_custom_shortcode_names(self) -> None:
         import markdown
 
         ext = _ShortcodePreserveExtension(["map", "map_list"])
@@ -3549,46 +3630,46 @@ class TestShortcodePreserveExtension:
         assert "{% map foo.yaml %}" in out
         assert "{% map bar.yaml %}" in out
 
-    def test_non_matching_braces_untouched(self):
+    def test_non_matching_braces_untouched(self) -> None:
         # Real attr_list usage on a non-shortcode element should still work,
         # i.e. our extension must not be too greedy.
         source = "A paragraph with attrs.\n{: .my-class }"
         out = self._convert(source)
         assert 'class="my-class"' in out
 
-    def test_empty_shortcodes_rejected(self):
+    def test_empty_shortcodes_rejected(self) -> None:
         with pytest.raises(ValueError):
             _ShortcodePreserveExtension([])
 
 
 class TestRegisterMarkdownExtension:
-    def test_appends_extension(self):
-        settings: dict = {}
+    def test_appends_extension(self) -> None:
+        settings: dict[str, Any] = {}
         _register_markdown_extension(settings)
         exts = settings["MARKDOWN"]["extensions"]
         assert any(isinstance(e, _ShortcodePreserveExtension) for e in exts)
 
-    def test_idempotent(self):
+    def test_idempotent(self) -> None:
         # i18n_subsites and similar plugins re-fire `initialized`. Repeat
         # calls must not stack copies of the extension.
-        settings: dict = {}
+        settings: dict[str, Any] = {}
         _register_markdown_extension(settings)
         _register_markdown_extension(settings)
         exts = settings["MARKDOWN"]["extensions"]
         assert sum(isinstance(e, _ShortcodePreserveExtension) for e in exts) == 1
 
-    def test_respects_opt_out(self):
-        settings: dict = {"OSM_DISABLE_MARKDOWN_PROTECTION": True}
+    def test_respects_opt_out(self) -> None:
+        settings: dict[str, Any] = {"OSM_DISABLE_MARKDOWN_PROTECTION": True}
         _register_markdown_extension(settings)
         # Either MARKDOWN is untouched, or extensions list has no preserver
         exts = settings.get("MARKDOWN", {}).get("extensions", [])
         assert not any(isinstance(e, _ShortcodePreserveExtension) for e in exts)
 
-    def test_uses_custom_shortcode_names(self):
+    def test_uses_custom_shortcode_names(self) -> None:
         # The extension's regex must match whatever the user configured.
         import markdown
 
-        settings: dict = {
+        settings: dict[str, Any] = {
             "OSM_SHORTCODE": "map",
             "OSM_LIST_SHORTCODE": "map_list",
         }
@@ -3606,7 +3687,7 @@ class TestRegisterMarkdownExtension:
         assert "{% map a.yaml %}" in out
         assert "{% map_list b.yaml %}" in out
 
-    def test_preserves_existing_extensions(self):
+    def test_preserves_existing_extensions(self) -> None:
         existing = ["markdown.extensions.extra"]
         settings = {"MARKDOWN": {"extensions": list(existing)}}
         _register_markdown_extension(settings)
@@ -3623,60 +3704,60 @@ class TestRegisterMarkdownExtension:
 class TestSafeUrl:
     # --- allowed schemes ---
 
-    def test_https_url_allowed(self):
+    def test_https_url_allowed(self) -> None:
         assert _safe_url("https://example.com") == "https://example.com"
 
-    def test_http_url_allowed(self):
+    def test_http_url_allowed(self) -> None:
         assert _safe_url("http://example.com") == "http://example.com"
 
-    def test_mailto_allowed(self):
+    def test_mailto_allowed(self) -> None:
         assert _safe_url("mailto:user@example.com") == "mailto:user@example.com"
 
-    def test_tel_allowed(self):
+    def test_tel_allowed(self) -> None:
         assert _safe_url("tel:+81-3-1234-5678") == "tel:+81-3-1234-5678"
 
-    def test_absolute_path_allowed(self):
+    def test_absolute_path_allowed(self) -> None:
         assert _safe_url("/static/images/photo.jpg") == "/static/images/photo.jpg"
 
-    def test_relative_path_allowed(self):
+    def test_relative_path_allowed(self) -> None:
         assert _safe_url("./images/photo.jpg") == "./images/photo.jpg"
 
-    def test_fragment_allowed(self):
+    def test_fragment_allowed(self) -> None:
         assert _safe_url("#section-1") == "#section-1"
 
-    def test_query_string_allowed(self):
+    def test_query_string_allowed(self) -> None:
         assert _safe_url("?q=search") == "?q=search"
 
     # --- blocked schemes ---
 
-    def test_javascript_blocked(self):
+    def test_javascript_blocked(self) -> None:
         assert _safe_url("javascript:alert(1)") == "#"
 
-    def test_data_uri_blocked(self):
+    def test_data_uri_blocked(self) -> None:
         assert _safe_url("data:text/html,<h1>XSS</h1>") == "#"
 
-    def test_vbscript_blocked(self):
+    def test_vbscript_blocked(self) -> None:
         assert _safe_url("vbscript:msgbox(1)") == "#"
 
-    def test_javascript_mixed_case_blocked(self):
+    def test_javascript_mixed_case_blocked(self) -> None:
         # verifies re.IGNORECASE is in effect
         assert _safe_url("JaVaScRiPt:alert(1)") == "#"
 
-    def test_javascript_uppercase_blocked(self):
+    def test_javascript_uppercase_blocked(self) -> None:
         assert _safe_url("JAVASCRIPT:alert(1)") == "#"
 
     # --- edge cases ---
 
-    def test_none_returns_hash(self):
+    def test_none_returns_hash(self) -> None:
         assert _safe_url(None) == "#"
 
-    def test_empty_string_returns_hash(self):
+    def test_empty_string_returns_hash(self) -> None:
         assert _safe_url("") == "#"
 
-    def test_whitespace_only_returns_hash(self):
+    def test_whitespace_only_returns_hash(self) -> None:
         assert _safe_url("   ") == "#"
 
-    def test_non_string_truthy_value(self):
+    def test_non_string_truthy_value(self) -> None:
         # str() conversion: integer 42 → "42", not a known scheme → "#"
         assert _safe_url(42) == "#"
 
@@ -3687,21 +3768,21 @@ class TestSafeUrl:
 
 
 class TestNormalizeUrlField:
-    def test_plain_string_returns_single_entry_no_label(self):
+    def test_plain_string_returns_single_entry_no_label(self) -> None:
         result = _normalize_url_field("https://example.com", None)
         assert result == [{"label": None, "href": "https://example.com"}]
 
-    def test_single_dict_with_label_and_href(self):
+    def test_single_dict_with_label_and_href(self) -> None:
         result = _normalize_url_field(
             {"label": "Blog", "href": "https://example.com"}, None
         )
         assert result == [{"label": "Blog", "href": "https://example.com"}]
 
-    def test_single_dict_missing_label(self):
+    def test_single_dict_missing_label(self) -> None:
         result = _normalize_url_field({"href": "https://example.com"}, None)
         assert result == [{"label": None, "href": "https://example.com"}]
 
-    def test_list_of_dicts(self):
+    def test_list_of_dicts(self) -> None:
         result = _normalize_url_field(
             [
                 {"label": "2023", "href": "https://example.com/2023"},
@@ -3713,17 +3794,17 @@ class TestNormalizeUrlField:
         assert result[0] == {"label": "2023", "href": "https://example.com/2023"}
         assert result[1] == {"label": "2024", "href": "https://example.com/2024"}
 
-    def test_article_url_map_none_preserves_href_as_is(self):
+    def test_article_url_map_none_preserves_href_as_is(self) -> None:
         raw = "{filename}posts/my-post.md"
         result = _normalize_url_field(raw, None)
         assert result == [{"label": None, "href": raw}]
 
-    def test_filename_resolved_when_map_provided(self):
+    def test_filename_resolved_when_map_provided(self) -> None:
         url_map = {"posts/my-post.md": "https://example.com/posts/my-post/"}
         result = _normalize_url_field("{filename}posts/my-post.md", url_map)
         assert result == [{"label": None, "href": "https://example.com/posts/my-post/"}]
 
-    def test_filename_in_dict_href_resolved(self):
+    def test_filename_in_dict_href_resolved(self) -> None:
         url_map = {"posts/visit.md": "https://example.com/posts/visit/"}
         result = _normalize_url_field(
             {"label": "Visit", "href": "{filename}posts/visit.md"}, url_map
@@ -3732,10 +3813,10 @@ class TestNormalizeUrlField:
             {"label": "Visit", "href": "https://example.com/posts/visit/"}
         ]
 
-    def test_none_input_returns_empty_list(self):
+    def test_none_input_returns_empty_list(self) -> None:
         assert _normalize_url_field(None, None) == []
 
-    def test_list_with_invalid_item_skipped(self):
+    def test_list_with_invalid_item_skipped(self) -> None:
         # integers in the list are not string or dict → skipped
         result = _normalize_url_field([42, {"href": "https://example.com"}], None)
         assert result == [{"label": None, "href": "https://example.com"}]
@@ -3747,44 +3828,44 @@ class TestNormalizeUrlField:
 
 
 class TestResolveImageUrl:
-    def test_https_url_returned_as_is(self):
+    def test_https_url_returned_as_is(self) -> None:
         assert (
             _resolve_image_url("https://example.com/img.jpg", "https://mysite.com")
             == "https://example.com/img.jpg"
         )
 
-    def test_http_url_returned_as_is(self):
+    def test_http_url_returned_as_is(self) -> None:
         assert (
             _resolve_image_url("http://example.com/img.jpg", "https://mysite.com")
             == "http://example.com/img.jpg"
         )
 
-    def test_absolute_path_prepends_siteurl(self):
+    def test_absolute_path_prepends_siteurl(self) -> None:
         assert (
             _resolve_image_url("/static/images/photo.jpg", "https://mysite.com")
             == "https://mysite.com/static/images/photo.jpg"
         )
 
-    def test_relative_path_prepends_siteurl_with_slash(self):
+    def test_relative_path_prepends_siteurl_with_slash(self) -> None:
         assert (
             _resolve_image_url("images/photo.jpg", "https://mysite.com")
             == "https://mysite.com/images/photo.jpg"
         )
 
-    def test_siteurl_trailing_slash_normalized(self):
+    def test_siteurl_trailing_slash_normalized(self) -> None:
         # siteurl with trailing slash should not produce double slash
         assert (
             _resolve_image_url("/static/img.jpg", "https://mysite.com/")
             == "https://mysite.com/static/img.jpg"
         )
 
-    def test_siteurl_trailing_slash_normalized_relative(self):
+    def test_siteurl_trailing_slash_normalized_relative(self) -> None:
         assert (
             _resolve_image_url("images/photo.jpg", "https://mysite.com/")
             == "https://mysite.com/images/photo.jpg"
         )
 
-    def test_subsite_siteurl(self):
+    def test_subsite_siteurl(self) -> None:
         assert (
             _resolve_image_url("images/photo.jpg", "https://mysite.com/blog")
             == "https://mysite.com/blog/images/photo.jpg"
@@ -3797,7 +3878,7 @@ class TestResolveImageUrl:
 
 
 class TestWalkSchemaProperties:
-    def test_locations_based_schema(self):
+    def test_locations_based_schema(self) -> None:
         """properties.locations.items.properties.* collected."""
         schema = {
             "properties": {
@@ -3811,13 +3892,13 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         assert "name" in out
         assert "category" in out
         assert out["name"]["title"] == "Name"
 
-    def test_dict_of_places_schema(self):
+    def test_dict_of_places_schema(self) -> None:
         """additionalProperties.properties.* collected."""
         schema = {
             "additionalProperties": {
@@ -3827,12 +3908,12 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         assert "name" in out
         assert "lat" in out
 
-    def test_bare_list_schema(self):
+    def test_bare_list_schema(self) -> None:
         """items.properties.* collected."""
         schema = {
             "items": {
@@ -3842,12 +3923,12 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         assert "name" in out
         assert "date" in out
 
-    def test_item_level_overrides_parent_level(self):
+    def test_item_level_overrides_parent_level(self) -> None:
         """Deeper item-level properties win over outer properties of same name."""
         schema = {
             "properties": {
@@ -3863,20 +3944,20 @@ class TestWalkSchemaProperties:
                 },
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         # item-level (inner) must win
         assert out["name"]["title"] == "Inner Name"
         assert out["name"]["x-osm-list-hidden"] is True
 
-    def test_non_dict_schema_is_noop(self):
-        out: dict = {}
+    def test_non_dict_schema_is_noop(self) -> None:
+        out: dict[str, Any] = {}
         _walk_schema_properties(None, out)
         _walk_schema_properties("not a dict", out)
         _walk_schema_properties([], out)
         assert out == {}
 
-    def test_x_osm_icon_dict_value_preserved_without_recursion(self):
+    def test_x_osm_icon_dict_value_preserved_without_recursion(self) -> None:
         """A dict-valued `x-osm-icon` hint must survive untouched — it's not
         a nested schema, so `_walk_schema_properties`'s recursion into
         properties/items/additionalProperties must not treat it as one."""
@@ -3888,18 +3969,18 @@ class TestWalkSchemaProperties:
                 },
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         assert out["category"]["x-osm-icon"] == {"ramen": "🍜", "cafe": "☕"}
         # No spurious keys leaked in from misinterpreting the icon map.
         assert set(out.keys()) == {"category"}
 
-    def test_empty_schema_is_noop(self):
-        out: dict = {}
+    def test_empty_schema_is_noop(self) -> None:
+        out: dict[str, Any] = {}
         _walk_schema_properties({}, out)
         assert out == {}
 
-    def test_nested_items_in_properties(self):
+    def test_nested_items_in_properties(self) -> None:
         """properties.items.items.properties.* (bare list with nested items)."""
         schema = {
             "properties": {
@@ -3912,14 +3993,14 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         assert "visited" in out
         assert out["visited"]["title"] == "Visited"
 
     # -- $ref support -----------------------------------------------------
 
-    def test_same_doc_ref_via_json_pointer(self):
+    def test_same_doc_ref_via_json_pointer(self) -> None:
         """`#/$defs/...` resolves against the schema passed in (no file needed)."""
         schema = {
             "$defs": {
@@ -3936,12 +4017,12 @@ class TestWalkSchemaProperties:
                 }
             },
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out)
         assert out["name"]["title"] == "Name"
         assert out["lat"]["title"] == "Latitude"
 
-    def test_cross_file_ref(self, tmp_path):
+    def test_cross_file_ref(self, tmp_path: Path) -> None:
         """A `../other.yaml#/$defs/...` ref resolves relative to schema_dir."""
         common = tmp_path / "_common.yaml"
         common.write_text(
@@ -3965,11 +4046,11 @@ class TestWalkSchemaProperties:
                 }
             },
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out, schema_dir=tmp_path, current_file=None)
         assert out["name"]["title"] == "共用名稱"
 
-    def test_allof_combination(self, tmp_path):
+    def test_allof_combination(self, tmp_path: Path) -> None:
         """`allOf: [{$ref: ...}]` alongside local `properties` both contribute."""
         common = tmp_path / "_common.yaml"
         common.write_text(
@@ -3996,12 +4077,12 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out, schema_dir=tmp_path)
         assert out["name"]["title"] == "共用名稱"
         assert out["rating"]["title"] == "Rating"
 
-    def test_ref_and_sibling_properties_both_forms(self, tmp_path):
+    def test_ref_and_sibling_properties_both_forms(self, tmp_path: Path) -> None:
         """`$ref` directly alongside `properties` at the same schema node
         (JSON Schema 2020-12 allows this without `allOf`) must also work."""
         common = tmp_path / "_common.yaml"
@@ -4029,12 +4110,12 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out, schema_dir=tmp_path)
         assert out["name"]["title"] == "共用名稱"
         assert out["rating"]["title"] == "Rating"
 
-    def test_referencing_side_overrides_shared_definition(self, tmp_path):
+    def test_referencing_side_overrides_shared_definition(self, tmp_path: Path) -> None:
         """A `$ref`-introduced field is the *outer* layer: the referencing
         schema's own `properties` entry of the same name must win."""
         common = tmp_path / "_common.yaml"
@@ -4062,11 +4143,13 @@ class TestWalkSchemaProperties:
                 }
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         _walk_schema_properties(schema, out, schema_dir=tmp_path)
         assert out["name"]["title"] == "自訂名稱"
 
-    def test_circular_ref_does_not_infinite_loop(self, tmp_path, caplog):
+    def test_circular_ref_does_not_infinite_loop(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A refs B, B refs A — must terminate and log a warning, not hang/crash."""
         a = tmp_path / "a.yaml"
         b = tmp_path / "b.yaml"
@@ -4097,7 +4180,7 @@ class TestWalkSchemaProperties:
             encoding="utf-8",
         )
         schema = {"$ref": "./a.yaml#/$defs/x"}
-        out: dict = {}
+        out: dict[str, Any] = {}
         with caplog.at_level("WARNING"):
             _walk_schema_properties(schema, out, schema_dir=tmp_path)
         # Both branches still contribute before the cycle is cut off.
@@ -4105,25 +4188,29 @@ class TestWalkSchemaProperties:
         assert out["from_b"]["title"] == "B"
         assert any("circular $ref" in r.message for r in caplog.records)
 
-    def test_missing_ref_file_only_warns(self, tmp_path, caplog):
+    def test_missing_ref_file_only_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A `$ref` to a nonexistent file must warn, not raise."""
         schema = {
             "properties": {
                 "name": {"$ref": "./does_not_exist.yaml#/$defs/base"},
             }
         }
-        out: dict = {}
+        out: dict[str, Any] = {}
         with caplog.at_level("WARNING"):
             _walk_schema_properties(schema, out, schema_dir=tmp_path)
         assert out == {"name": {"$ref": "./does_not_exist.yaml#/$defs/base"}}
         assert any("cannot load referenced schema" in r.message for r in caplog.records)
 
-    def test_unresolvable_pointer_only_warns(self, tmp_path, caplog):
+    def test_unresolvable_pointer_only_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """`$ref` pointer that doesn't exist in the target doc must warn, not raise."""
         common = tmp_path / "_common.yaml"
         common.write_text(yaml.dump({"$defs": {"base": {"properties": {}}}}))
         schema = {"$ref": "./_common.yaml#/$defs/nonexistent"}
-        out: dict = {}
+        out: dict[str, Any] = {}
         with caplog.at_level("WARNING"):
             _walk_schema_properties(schema, out, schema_dir=tmp_path)
         assert out == {}
@@ -4141,7 +4228,7 @@ class TestWalkSchemaProperties:
 
 
 @pytest.fixture(autouse=True)
-def _restore_osm_globals():
+def _restore_osm_globals() -> Iterator[None]:
     """Save and restore osm module globals around each test."""
     saved_resolver = osm_module._resolver
     saved_settings = osm_module._settings
@@ -4160,8 +4247,8 @@ def _restore_osm_globals():
 
 
 class TestRegister:
-    def test_connects_four_signals(self, monkeypatch):
-        connected: dict[str, list] = {
+    def test_connects_four_signals(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        connected: dict[str, list[Any]] = {
             "initialized": [],
             "content_object_init": [],
             "finalized": [],
@@ -4200,7 +4287,7 @@ class TestCopyStatic:
     def _make_pelican_obj(self, output_path: str) -> SimpleNamespace:
         return SimpleNamespace(settings={"OUTPUT_PATH": output_path})
 
-    def test_copies_bundled_static_to_output(self, tmp_path):
+    def test_copies_bundled_static_to_output(self, tmp_path: Path) -> None:
         pelican_obj = self._make_pelican_obj(str(tmp_path))
         _copy_static(pelican_obj)
 
@@ -4210,7 +4297,7 @@ class TestCopyStatic:
         assert (dest / "css").exists()
         assert (dest / "js").exists()
 
-    def test_overwrites_existing_dest(self, tmp_path):
+    def test_overwrites_existing_dest(self, tmp_path: Path) -> None:
         dest = tmp_path / "static" / "pelican_osm"
         dest.mkdir(parents=True)
         (dest / "stale_file.txt").write_text("old")
@@ -4228,13 +4315,13 @@ class TestCopyStatic:
 # ---------------------------------------------------------------------------
 
 
-def _make_pelican(settings: dict) -> SimpleNamespace:
+def _make_pelican(settings: dict[str, Any]) -> SimpleNamespace:
     """Build a minimal fake Pelican object with the given settings dict."""
     return SimpleNamespace(settings=settings)
 
 
 class TestInitResolver:
-    def test_sets_resolver_and_settings(self, tmp_path):
+    def test_sets_resolver_and_settings(self, tmp_path: Path) -> None:
         places = tmp_path / "places"
         places.mkdir()
         pelican_obj = _make_pelican(
@@ -4250,7 +4337,7 @@ class TestInitResolver:
         assert osm_module._settings is pelican_obj.settings
         assert osm_module._content_path == tmp_path
 
-    def test_relative_path_resolved(self, tmp_path):
+    def test_relative_path_resolved(self, tmp_path: Path) -> None:
         """Relative PATH is resolved against cwd (no pelicanconf key)."""
         import os
 
@@ -4271,7 +4358,7 @@ class TestInitResolver:
         finally:
             os.chdir(orig_cwd)
 
-    def test_subsite_siteurl_does_not_reset_url_map(self, tmp_path):
+    def test_subsite_siteurl_does_not_reset_url_map(self, tmp_path: Path) -> None:
         """When new SITEURL extends old one, _article_url_map is NOT cleared."""
         places = tmp_path / "places"
         places.mkdir()
@@ -4291,7 +4378,7 @@ class TestInitResolver:
         # URL map must still contain the main-site entry
         assert "posts/a.md" in osm_module._article_url_map
 
-    def test_non_subsite_clears_url_map(self, tmp_path):
+    def test_non_subsite_clears_url_map(self, tmp_path: Path) -> None:
         """A completely different SITEURL resets the URL map."""
         places = tmp_path / "places"
         places.mkdir()
@@ -4316,7 +4403,7 @@ class TestInitResolver:
 
 
 class TestProcessArticle:
-    def _setup_resolver(self, tmp_path):
+    def _setup_resolver(self, tmp_path: Path) -> None:
         """Prime module globals so _process_article can run."""
         places = tmp_path / "places"
         places.mkdir()
@@ -4332,19 +4419,24 @@ class TestProcessArticle:
         osm_module._article_url_map = {}
         osm_module._content_path = tmp_path
 
-    def test_non_article_page_is_ignored(self, tmp_path):
+    def test_non_article_page_is_ignored(self, tmp_path: Path) -> None:
         self._setup_resolver(tmp_path)
         initial_map = dict(osm_module._article_url_map)
         _process_article(SimpleNamespace())  # not Article or Page
         assert osm_module._article_url_map == initial_map
 
-    def _make_fake_article(self, src, url, content="<p>Hello</p>"):
+    def _make_fake_article(
+        self, src: str, url: str, content: str = "<p>Hello</p>"
+    ) -> Any:
         """Build a SimpleNamespace that passes isinstance via osm_module.Article
         patch.
         """
 
         class FakeArticle:
-            pass
+            source_path: str
+            url: str
+            lang: str
+            _content: str
 
         obj = FakeArticle()
         obj.source_path = src
@@ -4353,7 +4445,9 @@ class TestProcessArticle:
         obj._content = content
         return obj
 
-    def test_article_url_accumulated(self, tmp_path, monkeypatch):
+    def test_article_url_accumulated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         self._setup_resolver(tmp_path)
         src = str(tmp_path / "posts" / "my-post.md")
         article = self._make_fake_article(src, "posts/my-post/")
@@ -4368,7 +4462,9 @@ class TestProcessArticle:
         assert src in osm_module._article_url_map
         assert osm_module._article_url_map[src] == "https://example.com/posts/my-post/"
 
-    def test_setdefault_first_write_wins(self, tmp_path, monkeypatch):
+    def test_setdefault_first_write_wins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Second call with same src must NOT overwrite existing URL."""
         self._setup_resolver(tmp_path)
         src = str(tmp_path / "posts" / "my-post.md")
