@@ -5,6 +5,33 @@ on: [pull_request, workflow_dispatch]
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install the latest version of uv
+        uses: astral-sh/setup-uv@v10.3.2
+        with:
+          enable-cache: true
+          version: "latest"
+
+      - name: Install Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install published dependencies
+        run: uv sync --locked --no-sources --python ${{ matrix.python-version }}
+
+      - name: Run pre-commit hooks and tests
+        run: uv run --locked poe ci
+
+  browser:
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: pelican-osm
@@ -16,16 +43,13 @@ jobs:
           path: pelican-osm
 
       - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
           version: "latest"
 
       - name: Install published dependencies
         run: uv sync --locked --no-sources
-
-      - name: Run pre-commit hooks and tests
-        run: uv run --locked poe ci
 
       - name: Select the locked tabular release
         id: tabular

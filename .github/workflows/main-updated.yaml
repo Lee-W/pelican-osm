@@ -9,6 +9,8 @@ jobs:
   bump-version:
     if: "!startsWith(github.event.head_commit.message, 'bump:')"
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     name: "Bump version and create changelog with commitizen"
     steps:
       - name: Check out
@@ -19,7 +21,16 @@ jobs:
           persist-credentials: false
 
       - name: Create bump and changelog
-        uses: commitizen-tools/commitizen-action@master
+        id: cz
+        uses: commitizen-tools/commitizen-action@0.27.1
         with:
           github_token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           branch: main
+
+      - name: Release
+        if: steps.cz.outputs.version != ''
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          tag: ${{ steps.cz.outputs.version }}
+          skipIfReleaseExists: true
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
